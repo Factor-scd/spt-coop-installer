@@ -262,6 +262,31 @@ if (-not (Test-Path $zr)) { curl.exe -sSL -o $zr $sevenZipR }
 
 function Get-File($url, $dest) {
   if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) { Say "cached: $(Split-Path -Leaf $dest)"; return }
+  # local-first: any archive dropped NEXT TO THIS SCRIPT wins over the network.
+  # exact-name match, else prefix match (e.g. 'SPT-4.1.6-40743-731d7a2.7z' serves 'SPT-4.1.6.7z')
+  $want = [System.IO.Path]::GetFileNameWithoutExtension($dest)
+  $wn = ($want -replace '[^A-Za-z0-9]', '').ToLower()
+  $local = $null
+  if ($PSScriptRoot -and ($wn.Length -gt 0)) {
+    $ext = [System.IO.Path]::GetExtension($dest)
+    $files = @(Get-ChildItem -LiteralPath $PSScriptRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq $ext })
+    $exact = @()
+    $fuzzy = @()
+    foreach ($f in $files) {
+      $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
+      if ($cn.Length -eq 0) { continue }
+      if ($cn -eq $wn) { $exact += $f }
+      elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
+      elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
+    }
+    if ($exact.Count -gt 0) { $local = $exact[0] }
+    elseif ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0] }
+  }
+  if ($null -ne $local) {
+    Say "using local copy: $($local.Name)" "Green"
+    Copy-Item -LiteralPath $local.FullName -Destination $dest -Force
+    return
+  }
   try {
     $len = (Invoke-WebRequest -Method Head -Uri $url -UseBasicParsing -TimeoutSec 10).Headers['Content-Length']
     Say "downloading $(Split-Path -Leaf $dest) ($([int]($len/1MB)) MB)"

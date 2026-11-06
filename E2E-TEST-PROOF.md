@@ -182,3 +182,26 @@ final `ALL DONE` message named `SPT.Launcher.exe` WITHOUT its `SPT_Runtime\` pat
   NOT re-run end-to-end: strings cannot alter control flow; every behavioral claim above stands.
 - **New sha256 (`setup-spt.ps1`):** `7849caf0c90e24ceac53df519b30a77103a5490159f1a3dd2c7b1b16952e6cdb` (was `7ec871b4c6acf71d1f5c2246d10e1036ff4f44097390376d417d263d5f45f7d6`)
 - Published same-day to `git.buzzbee.dev/BuzzbeeSCD/spt-coop-installer`.
+
+## Status update - 2026-11-06 (post-proof change: local-artifact auto-detect)
+
+Field report: the SPT installer URL failed somewhere in the wild. Ask: auto-detect a local
+installer dropped next to the script and use it automatically, no arguments.
+
+- **Change scope:** `Get-File` gained a local-first lookup before any network access: exact
+  normalized-name match, then prefix match (e.g. `SPT-4.1.6-40743-731d7a2.7z` serves
+  `SPT-4.1.6.7z`), same extension only. Cache behavior unchanged (cache still wins). Download
+  path untouched verbatim. Zero parameters - auto-detect, auto-use.
+- **Validation:** PS 5.1 `[Parser]::ParseFile` gate `PARSE-OK 0 errors`; behavioral harness
+  runs the EXTRACTED shipped `Get-File` block against a dead URL: **7/7** (exact-name,
+  prefix-name, exact-beats-fuzzy, cache-still-wins, dead-url-dies-clean, fuzzy-mod-name,
+  extension-guard). Harness note: the block is materialized into a file before definition -
+  verified on PS 5.1 that IEX-defined functions do not inherit `$PSScriptRoot` while
+  file-defined ones (production shape) do; the shipped code is correct in production.
+- **Host probes same-day:** all four upstream URLs returned HTTP 200 from this network
+  (incl. the SPT asset at 154 MB) - the field failure was not reproducible from here; the
+  local-first path removes the dependency regardless.
+- NOT re-run end-to-end: the change only short-circuits the fetch step; the extraction and
+  install pipeline is byte-identical. Every behavioral claim above stands.
+- **New sha256 (`setup-spt.ps1`):** `15a8bce33dceacc9cd2dc96bf206cadcf758c7ac5019d296f3d4fde27e05c1f8`
+  (was `7849caf0c90e24ceac53df519b30a77103a5490159f1a3dd2c7b1b16952e6cdb`)
