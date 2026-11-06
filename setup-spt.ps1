@@ -470,4 +470,5 @@ Say "  server reachability    HTTP $ping" $(if ($ping -eq "200") {"Green"} else 
 
 Say ""
 if ($fail) { Die "some files are missing - see above." }
-Say "ALL DONE. Launch SPT.Launcher.exe, pick 'Matt Co-op', and yell in Discord when you're in." "Green"
+Say "ALL DONE. Open SPT_Runtime\SPT.Launcher.exe (NOT EscapeFromTarkov.exe!), pick 'Matt Co-op', and yell in Discord when you're in." "Green"
+Say "Desktop icon? Right-click SPT.Launcher.exe -> Show more options -> Send to -> Desktop (create shortcut)." "Green"

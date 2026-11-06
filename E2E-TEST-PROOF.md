@@ -1,7 +1,7 @@
 ---
 title: "SPT + Fika Co-op Installer - E2E Test Proof"
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 type: research
 tags: [spt, tarkov, fika, installer, testing, proof]
 status: final
@@ -169,3 +169,16 @@ Harnesses (each extracts/invokes the SHIPPED code, never a reimplementation):
 ---
 
 *Verdict: stamped and filed. Form 27-B countersigned. The install is proven.*
+## Status update - 2026-11-06 (post-proof copy change)
+
+First real friend install completed 2026-11-06 08:06 (in the wild, before any lab claim could
+help). The friend asked "which one do I open to run it?" while browsing the install root: the
+final `ALL DONE` message named `SPT.Launcher.exe` WITHOUT its `SPT_Runtime\` path.
+
+- **Change scope:** 2 string literals (the final Say lines) - now names `SPT_Runtime\SPT.Launcher.exe`,
+  warns against double-clicking `EscapeFromTarkov.exe` / `EscapeFromTarkov_BE.exe`, and prints the
+  desktop-shortcut ritual. Zero logic touched.
+- **Validation:** PS 5.1 `[Parser]::ParseFile` gate = `PARSE-OK 0 errors` (same gate as the suite).
+  NOT re-run end-to-end: strings cannot alter control flow; every behavioral claim above stands.
+- **New sha256 (`setup-spt.ps1`):** `7849caf0c90e24ceac53df519b30a77103a5490159f1a3dd2c7b1b16952e6cdb` (was `7ec871b4c6acf71d1f5c2246d10e1036ff4f44097390376d417d263d5f45f7d6`)
+- Published same-day to `git.buzzbee.dev/BuzzbeeSCD/spt-coop-installer`.
