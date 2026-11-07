@@ -205,3 +205,20 @@ installer dropped next to the script and use it automatically, no arguments.
   install pipeline is byte-identical. Every behavioral claim above stands.
 - **New sha256 (`setup-spt.ps1`):** `15a8bce33dceacc9cd2dc96bf206cadcf758c7ac5019d296f3d4fde27e05c1f8`
   (was `7849caf0c90e24ceac53df519b30a77103a5490159f1a3dd2c7b1b16952e6cdb`)
+
+## Status update - 2026-11-06 (post-proof fix r3: local-installer detection, round 2)
+
+Field report: local installer + scripts in the SAME folder went undetected. Suspected causes:
+(a) the field script copy predates the local-detect feature (5e81fdf), (b) an archive name the
+prefix rule missed (e.g. SPT-v4.1.6.7z), (c) a cache hit displayed as "cached:" read as a miss.
+
+- **Change scope:** build-stamp banner (every run self-identifies: "build 2026-11-06-r3"),
+  version-based third matcher rule (renamed archives carrying 4.1.6 + spt), recursive depth-2
+  folder scan, and a yellow miss-forensics line naming every archive seen. Download path
+  untouched.
+- **Validation:** PS 5.1 parse gate `PARSE-OK 0 errors`; behavioral harness (extracted shipped
+  block, dead URL): **11/11** incl. two renamed-archive cases and the miss-forensics case.
+- NOT re-run end-to-end: fetch-layer only.
+- **New sha256 (`setup-spt.ps1`):** `afd15dfa0869c6771c90a4035572c1e092c3c32ab0ebec47cffbe67024acaffa`
+  (was `15a8bce33dceacc9cd2dc96bf206cadcf758c7ac5019d296f3d4fde27e05c1f8`; an r2 attempt with
+  the recursive scan never shipped - gate red)
