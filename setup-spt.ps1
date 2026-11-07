@@ -254,6 +254,8 @@ if ($drive.Free -lt $need) {
   Die "Only $([int]($drive.Free/1GB)) GB free on $($drive.Name): - need $([int]($need/1GB)) GB $(if ($Update) {'(update mode)'} else {'(fresh install: EFT copy + patcher + SPT + mods)'})."
 }
 
+Say "build 2026-11-06-r3 - local-detect (recursive)"
+
 # ---------- 2. stage tools ----------
 $cache = Join-Path $env:LOCALAPPDATA "spt-setup-cache"
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
@@ -269,18 +271,30 @@ function Get-File($url, $dest) {
   $local = $null
   if ($PSScriptRoot -and ($wn.Length -gt 0)) {
     $ext = [System.IO.Path]::GetExtension($dest)
-    $files = @(Get-ChildItem -LiteralPath $PSScriptRoot -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq $ext })
+    $seen = @()
     $exact = @()
     $fuzzy = @()
-    foreach ($f in $files) {
+    $walpha = ($want -replace '[^a-zA-Z]', '').ToLower()
+    if ($walpha.Length -gt 3) { $walpha = $walpha.Substring(0, 3) }
+    $wver = ""
+    $mv = [regex]::Match($want, '\d+\.\d+\.\d+')
+    if ($mv.Success) { $wver = ($mv.Value -replace '[^0-9]', '') }
+    # next to the script AND in nearby subfolders (offline\, spt-setup-cache\, ...)
+    foreach ($f in (Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Depth 2 -File -ErrorAction SilentlyContinue)) {
+      if (@(".7z", ".zip") -contains $f.Extension.ToLower()) { $seen += $f.Name }
+      if ($f.Extension -ine $ext) { continue }
       $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
       if ($cn.Length -eq 0) { continue }
       if ($cn -eq $wn) { $exact += $f }
       elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
       elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
+      elseif (($wver.Length -ge 3) -and ($cn.Contains($wver)) -and ($walpha.Length -eq 0 -or $cn.Contains($walpha))) { $fuzzy += $f }
     }
-    if ($exact.Count -gt 0) { $local = $exact[0] }
+    if ($exact.Count -gt 0) { $local = @($exact | Sort-Object { $_.FullName.Length })[0] }
     elseif ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0] }
+    if (($null -eq $local) -and ($seen.Count -gt 0)) {
+      Say ("no local match for " + (Split-Path -Leaf $dest) + " - archives found: " + ((@($seen) | Select-Object -Unique | Select-Object -First 8) -join ", ")) "Yellow"
+    }
   }
   if ($null -ne $local) {
     Say "using local copy: $($local.Name)" "Green"
