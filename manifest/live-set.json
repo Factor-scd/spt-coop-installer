@@ -1,0 +1,422 @@
+{
+  "verified_on": "2026-11-11",
+  "source": "quadinaros-02",
+  "server_mods": [
+    "acidphantasm-addsecretexfilnotestocaches",
+    "acidphantasm-botplacementsystem",
+    "acidphantasm-brightlasers",
+    "acidphantasm-removesingleraidquestrequirement",
+    "AllQuestsCheckmarks",
+    "AmmoStats",
+    "archangelwtf-contentbackportprestiges",
+    "betterkeys",
+    "BlackDivServer",
+    "ClassicMovementServer",
+    "CSGasServer",
+    "CustomMapLoader",
+    "DrakiaXYZ-GildedKeyStorage",
+    "EasyMounting",
+    "ExpandedTaskText",
+    "fika-server",
+    "Interface10",
+    "ItemPropertyBackport",
+    "LennoxP90-MapVariants",
+    "LoadAmmoAnimServer",
+    "ManimalIcebreaker",
+    "ManimalInterchange",
+    "MergeConsumablesServer",
+    "MoreBotsServer",
+    "mpstark-dynamicmaps",
+    "PresetTrader",
+    "QuestExpMultiplier",
+    "QuestGlow",
+    "ReturnOfThunderstorms",
+    "SeasonRotator",
+    "ServerRoomBackground",
+    "ShoppingList",
+    "Solarint-SAIN-ServerMod",
+    "SPT-AKI Profile Editor.ModHelper",
+    "Tyfon.UIFixes.Server",
+    "WTT-ContentBackport",
+    "WTT-ServerCommonLib",
+    "[SVM] Server Value Modifier"
+  ],
+  "client_plugins": [
+    "acidphantasm-botplacementsystem",
+    "acidphantasm-brightlasers",
+    "AllQuestsCheckmarks",
+    "Anvil-WebOverlay",
+    "archangelwtf-contentbackportprestiges",
+    "BetterNightSkies",
+    "BlackDiv",
+    "ClassicMovement",
+    "ContinuousHealing",
+    "CSGas",
+    "CustomMapLoader",
+    "DeployScreen",
+    "DiscordRaidMap",
+    "DrakiaXYZ-Waypoints",
+    "Fika",
+    "HollywoodFX",
+    "HollywoodGraphics",
+    "Interface10",
+    "LennoxP90-MapVariants",
+    "LoadAmmoAnim",
+    "ManimalIcebreaker",
+    "ManimalInterchange",
+    "MergeConsumables",
+    "MoreBotsPlugin",
+    "mpstark-dynamicmaps",
+    "ozen.ContinuousLoadAmmo",
+    "PlayerEncumbranceBar",
+    "QuestGlow",
+    "QuickSellFlea",
+    "ReturnOfThunderstorms",
+    "SAIN",
+    "ServerRoomBackground",
+    "ShadowFlickerFix",
+    "ShoppingList",
+    "spt",
+    "tarkin-ladders",
+    "Terkoiz.Skipper",
+    "UnityToolkit",
+    "UseItemsAnywhere",
+    "WTT-ClientCommonLib",
+    "WTT-ContentBackportClient"
+  ],
+  "mapping": {
+    "[SVM] Server Value Modifier": {
+      "id": 236,
+      "slug": "server-value-modifier-svm",
+      "kind": "mod"
+    },
+    "AllQuestsCheckmarks": {
+      "id": 2025,
+      "slug": "all-quests-checkmarks",
+      "kind": "mod"
+    },
+    "AmmoStats": {
+      "id": 167,
+      "slug": "ammo-stats",
+      "kind": "mod"
+    },
+    "Anvil-WebOverlay": {
+      "id": 2879,
+      "slug": "weboverlay",
+      "kind": "mod"
+    },
+    "BetterNightSkies": {
+      "id": 2734,
+      "slug": "better-night-skies",
+      "kind": "mod"
+    },
+    "BlackDiv": {
+      "id": 2511,
+      "slug": "wtt-black-division-redacted-home",
+      "kind": "mod"
+    },
+    "BlackDivServer": {
+      "id": 2511,
+      "slug": "wtt-black-division-redacted-home",
+      "kind": "mod"
+    },
+    "CSGas": {
+      "id": 2864,
+      "slug": "manimals-cs-gas",
+      "kind": "mod"
+    },
+    "CSGasServer": {
+      "id": 2864,
+      "slug": "manimals-cs-gas",
+      "kind": "mod"
+    },
+    "ClassicMovement": {
+      "id": 1860,
+      "slug": "classic-movement",
+      "kind": "mod"
+    },
+    "ClassicMovementServer": {
+      "id": 1860,
+      "slug": "classic-movement",
+      "kind": "mod"
+    },
+    "ContinuousHealing": {
+      "id": 1884,
+      "slug": "continuous-healing",
+      "kind": "mod"
+    },
+    "CustomMapLoader": {
+      "id": 3193,
+      "slug": "tushonka-mapping-sdk",
+      "kind": "mod"
+    },
+    "DeployScreen": {
+      "id": 3047,
+      "slug": "deploy-screen-overhaul",
+      "kind": "mod"
+    },
+    "DiscordRaidMap": {
+      "id": 2714,
+      "slug": "discord-raid-map",
+      "kind": "mod"
+    },
+    "DrakiaXYZ-GildedKeyStorage": {
+      "id": 865,
+      "slug": "gilded-key-storage",
+      "kind": "mod"
+    },
+    "DrakiaXYZ-Waypoints": {
+      "id": 827,
+      "slug": "waypoints-expanded-navmesh",
+      "kind": "mod"
+    },
+    "EasyMounting": {
+      "id": 2790,
+      "slug": "easy-mounting",
+      "kind": "mod"
+    },
+    "ExpandedTaskText": {
+      "id": 2153,
+      "slug": "expanded-task-text-ett",
+      "kind": "mod"
+    },
+    "Fika": {
+      "id": null,
+      "slug": null,
+      "kind": null,
+      "engine": true,
+      "reason": "shipped by the installer itself ($fikaPlugin = Fika-Plugin release zip), not a Forge mod"
+    },
+    "HollywoodFX": {
+      "id": 2003,
+      "slug": "hollywoodfx",
+      "kind": "mod"
+    },
+    "HollywoodGraphics": {
+      "id": 2003,
+      "slug": "hollywoodfx",
+      "kind": "mod"
+    },
+    "Interface10": {
+      "id": 3179,
+      "slug": "interface-11-backport",
+      "kind": "mod"
+    },
+    "ItemPropertyBackport": {
+      "id": 2689,
+      "slug": "item-property-backport",
+      "kind": "mod"
+    },
+    "LennoxP90-MapVariants": {
+      "id": 3040,
+      "slug": "map-variants",
+      "kind": "mod"
+    },
+    "LoadAmmoAnim": {
+      "id": 2681,
+      "slug": "manimals-ammo-loading-animations",
+      "kind": "mod"
+    },
+    "LoadAmmoAnimServer": {
+      "id": 2681,
+      "slug": "manimals-ammo-loading-animations",
+      "kind": "mod"
+    },
+    "ManimalIcebreaker": {
+      "id": 2866,
+      "slug": "manimals-icebreaker-backport",
+      "kind": "mod"
+    },
+    "ManimalInterchange": {
+      "id": 3025,
+      "slug": "manimals-10-interchange-expansion-backport",
+      "kind": "mod"
+    },
+    "MergeConsumables": {
+      "id": 1657,
+      "slug": "mergeconsumables",
+      "kind": "mod"
+    },
+    "MergeConsumablesServer": {
+      "id": 1657,
+      "slug": "mergeconsumables",
+      "kind": "mod"
+    },
+    "MoreBotsPlugin": {
+      "id": 2426,
+      "slug": "morebotsapi",
+      "kind": "mod"
+    },
+    "MoreBotsServer": {
+      "id": 2426,
+      "slug": "morebotsapi",
+      "kind": "mod"
+    },
+    "PlayerEncumbranceBar": {
+      "id": 1374,
+      "slug": "player-encumbrance-bar",
+      "kind": "mod"
+    },
+    "PresetTrader": {
+      "id": 2966,
+      "slug": "presettrader",
+      "kind": "mod"
+    },
+    "QuestExpMultiplier": {
+      "id": 2766,
+      "slug": "quest-experience-multiplier",
+      "kind": "mod"
+    },
+    "QuestGlow": {
+      "id": 3214,
+      "slug": "quest-glow",
+      "kind": "mod"
+    },
+    "QuickSellFlea": {
+      "id": 2407,
+      "slug": "quicksellflea",
+      "kind": "mod"
+    },
+    "ReturnOfThunderstorms": {
+      "id": 3236,
+      "slug": "return-of-thunderstorms",
+      "kind": "mod"
+    },
+    "SAIN": {
+      "id": 791,
+      "slug": "sain-solarints-ai-modifications-full-ai-combat-system-replacement",
+      "kind": "mod"
+    },
+    "SPT-AKI Profile Editor.ModHelper": {
+      "id": null,
+      "slug": null,
+      "kind": null,
+      "engine": true,
+      "reason": "helper folder dropped by the SPT-AKI Profile Editor tool, not a Forge mod"
+    },
+    "SeasonRotator": {
+      "id": 2314,
+      "slug": "season-rotator",
+      "kind": "mod"
+    },
+    "ServerRoomBackground": {
+      "id": 3211,
+      "slug": "server-room-backport",
+      "kind": "mod"
+    },
+    "ShadowFlickerFix": {
+      "id": 1621,
+      "slug": "shadow-flicker-fix",
+      "kind": "mod"
+    },
+    "ShoppingList": {
+      "id": 3242,
+      "slug": "zezinhos-shopping-list",
+      "kind": "mod"
+    },
+    "Solarint-SAIN-ServerMod": {
+      "id": 791,
+      "slug": "sain-solarints-ai-modifications-full-ai-combat-system-replacement",
+      "kind": "mod"
+    },
+    "Terkoiz.Skipper": {
+      "id": 1343,
+      "slug": "skipper",
+      "kind": "mod"
+    },
+    "Tyfon.UIFixes.Server": {
+      "id": 1342,
+      "slug": "ui-fixes",
+      "kind": "mod"
+    },
+    "UnityToolkit": {
+      "id": 1426,
+      "slug": "unitytoolkit",
+      "kind": "mod"
+    },
+    "UseItemsAnywhere": {
+      "id": 2386,
+      "slug": "use-items-anywhere",
+      "kind": "mod"
+    },
+    "WTT-ClientCommonLib": {
+      "id": 2310,
+      "slug": "wtt-commonlib",
+      "kind": "mod"
+    },
+    "WTT-ContentBackport": {
+      "id": 2512,
+      "slug": "wtt-content-backport",
+      "kind": "mod"
+    },
+    "WTT-ContentBackportClient": {
+      "id": 2512,
+      "slug": "wtt-content-backport",
+      "kind": "mod"
+    },
+    "WTT-ServerCommonLib": {
+      "id": 2310,
+      "slug": "wtt-commonlib",
+      "kind": "mod"
+    },
+    "acidphantasm-addsecretexfilnotestocaches": {
+      "id": 2049,
+      "slug": "add-secret-exfil-notes-to-caches",
+      "kind": "mod"
+    },
+    "acidphantasm-botplacementsystem": {
+      "id": 2097,
+      "slug": "abps-acids-bot-placement-system",
+      "kind": "mod"
+    },
+    "acidphantasm-brightlasers": {
+      "id": 1358,
+      "slug": "brightlasers",
+      "kind": "mod"
+    },
+    "acidphantasm-removesingleraidquestrequirement": {
+      "id": 2892,
+      "slug": "remove-single-raid-quest-requirements",
+      "kind": "mod"
+    },
+    "archangelwtf-contentbackportprestiges": {
+      "id": 2540,
+      "slug": "content-backport-prestiges",
+      "kind": "mod"
+    },
+    "betterkeys": {
+      "id": 1888,
+      "slug": "better-keys-ng",
+      "kind": "mod"
+    },
+    "fika-server": {
+      "id": null,
+      "slug": null,
+      "kind": null,
+      "engine": true,
+      "reason": "shipped by the installer itself ($fikaServer = Fika-Server-CSharp release zip), not a Forge mod"
+    },
+    "mpstark-dynamicmaps": {
+      "id": 1431,
+      "slug": "dynamic-maps",
+      "kind": "mod"
+    },
+    "ozen.ContinuousLoadAmmo": {
+      "id": 2112,
+      "slug": "continuous-load-ammo",
+      "kind": "mod"
+    },
+    "spt": {
+      "id": null,
+      "slug": null,
+      "kind": null,
+      "engine": true,
+      "reason": "the SPT server itself ($spt7z release download), not a Forge mod"
+    },
+    "tarkin-ladders": {
+      "id": 2649,
+      "slug": "climbable-ladders",
+      "kind": "mod"
+    }
+  }
+}

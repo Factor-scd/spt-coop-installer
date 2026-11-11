@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SPTCoopSetup</RootNamespace>
+    <AssemblyName>ArgvTests</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!--
+    The quoting/target-guard logic is pure BCL code, so the test project compiles those same
+    source files instead of re-implementing them (no Windows-specific types are involved).
+  -->
+  <ItemGroup>
+    <Compile Include="../../src/SPTCoopSetup/Arguments.cs" Link="Arguments.cs" />
+    <Compile Include="../../src/SPTCoopSetup/ArgumentQuoting.cs" Link="ArgumentQuoting.cs" />
+    <Compile Include="../../src/SPTCoopSetup/TargetGuard.cs" Link="TargetGuard.cs" />
+  </ItemGroup>
+
+</Project>

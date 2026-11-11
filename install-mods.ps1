@@ -1,16 +1,31 @@
 <#
   SPT co-op MOD LAYER for an EXISTING SPT install.
-  Drops Fika 2.4.x + the 54 pinned mods + co-op config into the SPT folder it lives in.
+  Drops Fika 2.4.x + the 52 pinned mods + co-op config into the SPT folder it lives in.
   No arguments: put this file (and run-mods.bat) INSIDE the SPT folder (the one with
   SPT_Runtime\ in it) and double-click run-mods.bat. Safe to re-run: refreshes the mod
   layer only, never deletes, never touches tuned configs (loader.json / config.json /
   fika.jsonc / Noname.json), quarantines nothing of yours. Never patches, never copies EFT.
 
   Manual run:  powershell -ExecutionPolicy Bypass -File install-mods.ps1 [-SptDir D:\SPT]
+
+  -SptDir      the SPT folder (defaults to the folder this script lives in).
+  -ServerHost  co-op server the launcher is pointed at.
+
+  The pin list comes from -ManifestPath (JSON: {"mods":["id|kind|slug|version", ...]}), else
+  mods.json next to this script, else the built-in $ModManifest block below.
+
+  -ArchiveDir adds a local archive folder, searched recursively. Upstream URLs still win; the
+  local copy is only the offline fallback. The portable app passes <exeDir>\archives.
+
+  -NoElevate never re-launches itself elevated - it fails fast instead. Use it when the caller
+  is already elevated and needs this process' console output (the app host does).
 #>
 param(
   [string]$SptDir = "",
-  [string]$ServerHost = "10.4.20.2:6969"
+  [string]$ServerHost = "10.4.20.2:6969",
+  [string]$ArchiveDir = "",
+  [string]$ManifestPath = "",
+  [switch]$NoElevate
 )
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
@@ -20,6 +35,7 @@ $fikaPlugin = "https://github.com/project-fika/Fika-Plugin/releases/download/v2.
 $fikaServer = "https://github.com/project-fika/Fika-Server-CSharp/releases/download/v2.4.2/Fika.Server.Release.2.4.2.zip"
 $sevenZipR  = "https://www.7-zip.org/a/7zr.exe"
 
+# >>> GENERATED-MANIFEST (manifest/refresh.ps1 rewrites this block; do not hand-edit)
 # id|kind|slug|version   (kind: mod|addon)
 $ModManifest = @(
   "2512|mod|wtt-content-backport|2.0.5",
@@ -27,8 +43,6 @@ $ModManifest = @(
   "1342|mod|ui-fixes|6.0.4",
   "1358|mod|brightlasers|3.0.0",
   "1884|mod|continuous-healing|1.6.3",
-  "1469|mod|autodeposit|6.0.0",
-  "2207|mod|fast-sell-in-flea|1.3.1",
   "236|mod|server-value-modifier-svm|2.2.3",
   "2025|mod|all-quests-checkmarks|1.4.0",
   "2097|mod|abps-acids-bot-placement-system|2.1.0",
@@ -37,9 +51,7 @@ $ModManifest = @(
   "2112|mod|continuous-load-ammo|1.2.0",
   "2386|mod|use-items-anywhere|2.1.6",
   "1657|mod|mergeconsumables|1.6.3",
-  "3103|mod|cabinet-looter|1.0.4",
   "2003|mod|hollywoodfx|3.0.0",
-  "1298|mod|handsarenotbusy|1.7.1",
   "167|mod|ammo-stats|4.1.0",
   "1343|mod|skipper|1.1.5",
   "2790|mod|easy-mounting|2.0.1",
@@ -47,7 +59,8 @@ $ModManifest = @(
   "1431|mod|dynamic-maps|1.2.1",
   "2540|mod|content-backport-prestiges|1.1.0",
   "2689|mod|item-property-backport|1.5.2",
-  "2866|mod|manimals-icebreaker-backport|1.1.3",
+  "2866|mod|manimals-icebreaker-backport|1.2.4",
+  "98|addon|manimals-icebreaker-backport-fika-sync|1.2.4",
   "3179|mod|interface-11-backport|1.0.4",
   "3211|mod|server-room-backport|1.0.0",
   "3040|mod|map-variants|1.1.0",
@@ -56,30 +69,68 @@ $ModManifest = @(
   "2049|mod|add-secret-exfil-notes-to-caches|2.1.0",
   "1888|mod|better-keys-ng|1.8.0",
   "3047|mod|deploy-screen-overhaul|1.1.0",
-  "98|addon|manimals-icebreaker-backport-fika-sync|1.1.0",
-  "902|mod|bigbrain|1.5.0",
-  "2426|mod|morebotsapi|2.1.1",
+  "2426|mod|morebotsapi|2.1.2",
   "2511|mod|wtt-black-division-redacted-home|1.3.1",
   "2649|mod|climbable-ladders|1.0.4",
-  "2864|mod|manimals-cs-gas|2.0.0",
-  "3025|mod|manimals-10-interchange-expansion-backport|1.0.5",
+  "2864|mod|manimals-cs-gas|2.0.1",
+  "3025|mod|manimals-10-interchange-expansion-backport|1.0.8",
   "1426|mod|unitytoolkit|2.0.2",
   "791|mod|sain-solarints-ai-modifications-full-ai-combat-system-replacement|4.5.1",
   "827|mod|waypoints-expanded-navmesh|1.9.0",
   "3236|mod|return-of-thunderstorms|1.2.4",
   "2153|mod|expanded-task-text-ett|2.1.0",
-  "2639|mod|auto-shoulder-swap|1.1.1",
   "2681|mod|manimals-ammo-loading-animations|2.0.0",
   "1374|mod|player-encumbrance-bar|1.3.0",
-  "2954|mod|quest-marker|1.4.0",
   "3214|mod|quest-glow|1.0.0",
-  "2971|mod|universal-co-op-exfil|1.0.1",
-  "2125|mod|dehazardifier-updated-by-tetris|1.2.0",
-  "2879|mod|weboverlay|1.11.0"
+  "2879|mod|weboverlay|1.12.0",
+  "865|mod|gilded-key-storage|2.1.1",
+  "1860|mod|classic-movement|1.1.3",
+  "2766|mod|quest-experience-multiplier|1.0.1",
+  "2892|mod|remove-single-raid-quest-requirements|1.1.0",
+  "2966|mod|presettrader|1.2.0",
+  "2407|mod|quicksellflea|1.4.5",
+  "3242|mod|zezinhos-shopping-list|1.2.4"
 )
+# <<< GENERATED-MANIFEST
 
 function Say($m, $c = "White") { Write-Host ">> $m" -ForegroundColor $c }
 function Die($m) { Write-Host "MOD-LAYER FAILED: $m" -ForegroundColor Red; exit 1 }
+
+# ---------- manifest resolution: -ManifestPath -> mods.json next to the script -> built-in pins ----------
+# (same loader semantics as setup-spt.ps1: 4 pipe-separated fields, row number in the error)
+function Read-ManifestPins($path) {
+  if (-not (Test-Path -LiteralPath $path)) { Die "manifest not found: $path" }
+  $json = $null
+  try { $json = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json }
+  catch { Die "manifest unreadable: $path ($($_.Exception.Message))" }
+  $rows = @($json.mods | Where-Object { $null -ne $_ })
+  if ($rows.Count -eq 0) { Die "manifest invalid: $path has no mods[] rows." }
+  $n = 0
+  foreach ($r in $rows) {
+    $n++
+    $row = "$r".Trim()
+    $fields = @($row -split '\|')
+    $bad = ($fields.Count -ne 4)
+    if (-not $bad) { foreach ($f in $fields) { if ("$f".Trim() -eq "") { $bad = $true } } }
+    if ($bad) { Die "manifest invalid at row $n`: $row" }
+  }
+  # plain return: the caller wraps with @() and gets one element per pin (",$rows" would hand
+  # back a single nested array, so a 54-pin manifest would look like 1 pin to the loop)
+  return $rows
+}
+
+$manifestSource = ""
+if ($ManifestPath -ne "") {
+  $ModManifest = @(Read-ManifestPins $ManifestPath)
+  $manifestSource = $ManifestPath
+} elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "mods.json"))) {
+  $scriptModsJson = Join-Path $PSScriptRoot "mods.json"
+  $ModManifest = @(Read-ManifestPins $scriptModsJson)
+  $manifestSource = $scriptModsJson
+} else {
+  $manifestSource = "built-in pins in install-mods.ps1"
+}
+Say "using manifest: $($ModManifest.Count) pins from $manifestSource" "Green"
 
 # ---------- silly Tarkov pun ticker (runs during long waits) ----------
 $puns = @(
@@ -138,9 +189,17 @@ function Stop-Ticker {
 # ---------- 0. preflight (firewall rules want admin) ----------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole("Administrators")) {
+  if ($NoElevate) {
+    # the app host is already elevated and captures THIS process' console - a RunAs relaunch would
+    # open a second window, leave the host with no output and hang its progress parser.
+    Die "needs administrator rights - the app runs this elevated; run it from an admin PowerShell instead."
+  }
   Say "needs an admin shell - asking Windows to elevate (click Yes on the UAC prompt)..."
   $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath))
   if ($SptDir -ne "") { $relaunchArgs += @('-SptDir', ('"{0}"' -f $SptDir)) }
+  if ($ServerHost -ne "10.4.20.2:6969") { $relaunchArgs += @('-ServerHost', $ServerHost) }
+  if ($ArchiveDir -ne "") { $relaunchArgs += @('-ArchiveDir', ('"{0}"' -f $ArchiveDir)) }
+  if ($ManifestPath -ne "") { $relaunchArgs += @('-ManifestPath', ('"{0}"' -f $ManifestPath)) }
   try {
     Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList $relaunchArgs | Out-Null
     exit 0
@@ -162,36 +221,48 @@ New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
 function Get-File($url, $dest) {
   if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) { Say "cached: $(Split-Path -Leaf $dest)"; return }
-  # local-first: any archive dropped NEXT TO THIS SCRIPT wins over the network.
+  # local-first: -ArchiveDir (searched recursively) wins over the network, then any archive
+  # dropped NEXT TO THIS SCRIPT. exact-name match, else prefix match, else version-token fuzzy.
   $want = [System.IO.Path]::GetFileNameWithoutExtension($dest)
   $wn = ($want -replace '[^A-Za-z0-9]', '').ToLower()
   $local = $null
-  if ($PSScriptRoot -and ($wn.Length -gt 0)) {
+  $localDirs = @()
+  if (($PSScriptRoot -or $ArchiveDir) -and ($wn.Length -gt 0)) {
     $ext = [System.IO.Path]::GetExtension($dest)
-    if ($null -eq $script:localFiles) {
-      # walk ONCE: this script often lives inside a huge game folder
-      $script:localFiles = @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Depth 2 -File -ErrorAction SilentlyContinue)
-    }
     $seen = @()
-    $exact = @()
-    $fuzzy = @()
     $walpha = ($want -replace '[^a-zA-Z]', '').ToLower()
     if ($walpha.Length -gt 3) { $walpha = $walpha.Substring(0, 3) }
     $wver = ""
     $mv = [regex]::Match($want, '\d+\.\d+\.\d+')
     if ($mv.Success) { $wver = ($mv.Value -replace '[^0-9]', '') }
-    foreach ($f in $script:localFiles) {
-      if (@(".7z", ".zip") -contains $f.Extension.ToLower()) { $seen += $f.Name }
-      if ($f.Extension -ine $ext) { continue }
-      $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
-      if ($cn.Length -eq 0) { continue }
-      if ($cn -eq $wn) { $exact += $f }
-      elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
-      elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
-      elseif (($wver.Length -ge 3) -and ($cn.Contains($wver)) -and ($walpha.Length -eq 0 -or $cn.Contains($walpha))) { $fuzzy += $f }
+    $searchDirs = @()
+    if ($ArchiveDir) { $searchDirs += @{ Path = $ArchiveDir; Depth = 32 }; $localDirs += $ArchiveDir }
+    if ($PSScriptRoot) {
+      if ($null -eq $script:localFiles) {
+        # walk ONCE: this script often lives inside a huge game folder
+        $script:localFiles = @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Depth 2 -File -ErrorAction SilentlyContinue)
+      }
+      $searchDirs += @{ Path = $PSScriptRoot; Depth = 2 }
+      $localDirs += $PSScriptRoot
     }
-    if ($exact.Count -gt 0) { $local = @($exact | Sort-Object { $_.FullName.Length })[0] }
-    elseif ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0] }
+    foreach ($sd in $searchDirs) {
+      if (-not (Test-Path -LiteralPath $sd.Path)) { continue }
+      $files = if ($sd.Path -eq $PSScriptRoot) { $script:localFiles } else { @(Get-ChildItem -LiteralPath $sd.Path -Recurse -Depth $sd.Depth -File -ErrorAction SilentlyContinue) }
+      $exact = @()
+      $fuzzy = @()
+      foreach ($f in $files) {
+        if (@(".7z", ".zip") -contains $f.Extension.ToLower()) { $seen += $f.Name }
+        if ($f.Extension -ine $ext) { continue }
+        $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
+        if ($cn.Length -eq 0) { continue }
+        if ($cn -eq $wn) { $exact += $f }
+        elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
+        elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
+        elseif (($wver.Length -ge 3) -and ($cn.Contains($wver)) -and ($walpha.Length -eq 0 -or $cn.Contains($walpha))) { $fuzzy += $f }
+      }
+      if ($exact.Count -gt 0) { $local = @($exact | Sort-Object { $_.FullName.Length })[0]; break }
+      if ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0]; break }
+    }
     if (($null -eq $local) -and ($seen.Count -gt 0) -and (@(".7z", ".zip") -contains $ext.ToLower())) {
       Say ("no local match for " + (Split-Path -Leaf $dest) + " - archives found: " + ((@($seen) | Select-Object -Unique | Select-Object -First 8) -join ", ")) "Yellow"
     }
@@ -207,8 +278,18 @@ function Get-File($url, $dest) {
   } catch {
     Say "downloading $(Split-Path -Leaf $dest)"
   }
-  curl.exe -sSL --retry 3 --retry-delay 2 -o $dest $url
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dest)) { Die "download failed: $url" }
+  # stage to .part and only promote on a clean exit: a killed curl must never leave a
+  # truncated file in the cache that the next run accepts as "cached:".
+  $part = "$dest.part"
+  Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+  curl.exe -sSL --retry 3 --retry-delay 2 -o $part $url
+  $got = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0)
+  if (-not $got) {
+    Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+    $where = if ($localDirs.Count -gt 0) { $localDirs -join ', ' } else { "no local archive dir (-ArchiveDir not set)" }
+    Die "download failed: $(Split-Path -Leaf $dest) - none matched in $where, and the upstream copy at $url did not download. Put the archive in one of those folders or check the network."
+  }
+  Move-Item -LiteralPath $part -Destination $dest -Force
 }
 
 # ---------- 1. tools ----------

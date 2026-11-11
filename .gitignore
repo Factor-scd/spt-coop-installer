@@ -1,0 +1,19 @@
+# ---- .NET build output ----
+bin/
+obj/
+publish/
+*.user
+.vs/
+
+# local mod archives (setup-spt.ps1 -ArchiveDir writes next to the exe)
+archives/
+
+# transient harness scratch (tests/run-tests.sh clears it on exit; a killed run would leave it)
+tests/cache/
+
+# a literal Windows-path filename ("C:\temp\...") has polluted this tree before.
+# Git reads "\t" in a pattern as an escape, so list both readings plus the raw name.
+C:\temp\*
+C:\\temp\\*
+C:/temp/*
+C:*

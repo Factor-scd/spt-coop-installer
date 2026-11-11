@@ -1,0 +1,11 @@
+#!/bin/sh
+# Linux/pwsh harness shim for curl.exe.
+#
+# This file exists ONLY so tests/test_localfetch.ps1 can exercise the Windows code
+# path on a Linux box: the scripts call `curl.exe`, which does not exist there, so the
+# dead-URL cases would blow up with CommandNotFound instead of the clean
+# "download failed" die. Windows uses the real curl.exe (shipped with Windows 10 1803+
+# and PowerShell) - this shim is never copied there.
+#
+# tests/run-tests.sh prepends tests/shim to PATH for the harness run only.
+exec /usr/bin/curl "$@"

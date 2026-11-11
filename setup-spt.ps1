@@ -4,16 +4,29 @@
   SPT + FIKA + modpack one-shot installer for Matt's co-op crew (Windows 10/11 x64).
 .DESCRIPTION
   Replicates the official SPT installer non-interactively:
-    EFT copy -> optional downgrade patcher -> SPT 4.1.6 layer -> Fika 2.4.x -> 54 pinned mods
+    EFT copy -> optional downgrade patcher -> SPT 4.1.6 layer -> Fika 2.4.x -> 52 pinned mods
     -> launcher pointed at the co-op server -> firewall rules -> verify.
 
   Assumes Escape From Tarkov IS installed (BSG Launcher, you must own the game). The script
   locates it via registry + common paths (override with -EftPath) and stops with a clear
   message if it cannot find it - it does not install or repair EFT itself.
 
-  -Update refreshes the Fika + mod layer over an existing SPT install from the PINNED
-  manifest (version bumps arrive with a re-pinned script - everyone staying identical is
-  the point). It skips EFT detection, copying and the patcher.
+  -Update upgrades an EXISTING install in place. It reads the client build from
+  <InstallDir>\ConsistencyInfo and, when that differs from the pinned SPT target build, runs the
+  SAME downgrade patcher as a fresh install (mirrors.json -> patch archive -> staged on the
+  install drive -> robocopy /MOVE -> patcher.exe autoclose). It then adds the SPT layer only if
+  SPT_Runtime\SPT.Server.exe is missing, and refreshes Fika + the mod layer from the PINNED
+  manifest (version bumps arrive with a re-pinned manifest - everyone staying identical is the
+  point). It never copies EFT and never deletes anything from your user tree.
+
+  The pin list comes from -ManifestPath (JSON: {"mods":["id|kind|slug|version", ...]}), else
+  mods.json next to this script, else the built-in $ModManifest block below.
+
+  -ArchiveDir adds a local archive folder, searched recursively. Upstream URLs still win; the
+  local copy is only the offline fallback. The portable app passes <exeDir>\archives.
+
+  -NoElevate never re-launches itself elevated - it fails fast instead. Use it when the caller
+  is already elevated and needs this process' console output (the app host does).
 
   Run with no arguments and the script asks where SPT should live (Enter accepts
   C:\SPT). Pass -InstallDir to skip the prompt (automation / -Update runs).
@@ -22,7 +35,8 @@
     - Escape From Tarkov installed via BSG Launcher [not needed for -Update]
     - .NET 10 Desktop + ASP.NET Core 10 runtimes
     - EFT size + ~25 GB free for a fresh install (~85 GB for a standard EFT) / ~10 GB for -Update
-    - Admin PowerShell
+      (~10 GB more when -Update has to stage a game patch: 3x patch size + margin)
+    - Admin PowerShell (or -NoElevate from an already elevated host)
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File setup-spt.ps1
@@ -33,6 +47,9 @@ param(
   [string]$InstallDir = "C:\SPT",
   [string]$ServerHost = "10.4.20.2:6969",
   [string]$EftPath = "",
+  [string]$ArchiveDir = "",
+  [string]$ManifestPath = "",
+  [switch]$NoElevate,
   [switch]$Update
 )
 
@@ -46,14 +63,13 @@ $sevenZipR   = "https://www.7-zip.org/a/7zr.exe"
 $patchHosts  = @("https://patcher.sp-tushonka.com", "https://mirror.sp-tushonka.com")
 
 # id|kind|slug|version   (kind: mod|addon)
+# >>> GENERATED-MANIFEST (manifest/refresh.ps1 rewrites this block; do not hand-edit)
 $ModManifest = @(
   "2512|mod|wtt-content-backport|2.0.5",
   "2310|mod|wtt-commonlib|3.0.6",
   "1342|mod|ui-fixes|6.0.4",
   "1358|mod|brightlasers|3.0.0",
   "1884|mod|continuous-healing|1.6.3",
-  "1469|mod|autodeposit|6.0.0",
-  "2207|mod|fast-sell-in-flea|1.3.1",
   "236|mod|server-value-modifier-svm|2.2.3",
   "2025|mod|all-quests-checkmarks|1.4.0",
   "2097|mod|abps-acids-bot-placement-system|2.1.0",
@@ -62,9 +78,7 @@ $ModManifest = @(
   "2112|mod|continuous-load-ammo|1.2.0",
   "2386|mod|use-items-anywhere|2.1.6",
   "1657|mod|mergeconsumables|1.6.3",
-  "3103|mod|cabinet-looter|1.0.4",
   "2003|mod|hollywoodfx|3.0.0",
-  "1298|mod|handsarenotbusy|1.7.1",
   "167|mod|ammo-stats|4.1.0",
   "1343|mod|skipper|1.1.5",
   "2790|mod|easy-mounting|2.0.1",
@@ -72,7 +86,8 @@ $ModManifest = @(
   "1431|mod|dynamic-maps|1.2.1",
   "2540|mod|content-backport-prestiges|1.1.0",
   "2689|mod|item-property-backport|1.5.2",
-  "2866|mod|manimals-icebreaker-backport|1.1.3",
+  "2866|mod|manimals-icebreaker-backport|1.2.4",
+  "98|addon|manimals-icebreaker-backport-fika-sync|1.2.4",
   "3179|mod|interface-11-backport|1.0.4",
   "3211|mod|server-room-backport|1.0.0",
   "3040|mod|map-variants|1.1.0",
@@ -81,30 +96,67 @@ $ModManifest = @(
   "2049|mod|add-secret-exfil-notes-to-caches|2.1.0",
   "1888|mod|better-keys-ng|1.8.0",
   "3047|mod|deploy-screen-overhaul|1.1.0",
-  "98|addon|manimals-icebreaker-backport-fika-sync|1.1.0",
-  "902|mod|bigbrain|1.5.0",
-  "2426|mod|morebotsapi|2.1.1",
+  "2426|mod|morebotsapi|2.1.2",
   "2511|mod|wtt-black-division-redacted-home|1.3.1",
   "2649|mod|climbable-ladders|1.0.4",
-  "2864|mod|manimals-cs-gas|2.0.0",
-  "3025|mod|manimals-10-interchange-expansion-backport|1.0.5",
+  "2864|mod|manimals-cs-gas|2.0.1",
+  "3025|mod|manimals-10-interchange-expansion-backport|1.0.8",
   "1426|mod|unitytoolkit|2.0.2",
   "791|mod|sain-solarints-ai-modifications-full-ai-combat-system-replacement|4.5.1",
   "827|mod|waypoints-expanded-navmesh|1.9.0",
   "3236|mod|return-of-thunderstorms|1.2.4",
   "2153|mod|expanded-task-text-ett|2.1.0",
-  "2639|mod|auto-shoulder-swap|1.1.1",
   "2681|mod|manimals-ammo-loading-animations|2.0.0",
   "1374|mod|player-encumbrance-bar|1.3.0",
-  "2954|mod|quest-marker|1.4.0",
   "3214|mod|quest-glow|1.0.0",
-  "2971|mod|universal-co-op-exfil|1.0.1",
-  "2125|mod|dehazardifier-updated-by-tetris|1.2.0",
-  "2879|mod|weboverlay|1.11.0"
+  "2879|mod|weboverlay|1.12.0",
+  "865|mod|gilded-key-storage|2.1.1",
+  "1860|mod|classic-movement|1.1.3",
+  "2766|mod|quest-experience-multiplier|1.0.1",
+  "2892|mod|remove-single-raid-quest-requirements|1.1.0",
+  "2966|mod|presettrader|1.2.0",
+  "2407|mod|quicksellflea|1.4.5",
+  "3242|mod|zezinhos-shopping-list|1.2.4"
 )
+# <<< GENERATED-MANIFEST
 
 function Say($m, $c = "White") { Write-Host ">> $m" -ForegroundColor $c }
 function Die($m) { Write-Host "SETUP FAILED: $m" -ForegroundColor Red; exit 1 }
+
+# ---------- manifest resolution: -ManifestPath -> mods.json next to the script -> built-in pins ----------
+function Read-ManifestPins($path) {
+  if (-not (Test-Path -LiteralPath $path)) { Die "manifest not found: $path" }
+  $json = $null
+  try { $json = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json }
+  catch { Die "manifest unreadable: $path ($($_.Exception.Message))" }
+  $rows = @($json.mods | Where-Object { $null -ne $_ })
+  if ($rows.Count -eq 0) { Die "manifest invalid: $path has no mods[] rows." }
+  $n = 0
+  foreach ($r in $rows) {
+    $n++
+    $row = "$r".Trim()
+    $fields = @($row -split '\|')
+    $bad = ($fields.Count -ne 4)
+    if (-not $bad) { foreach ($f in $fields) { if ("$f".Trim() -eq "") { $bad = $true } } }
+    if ($bad) { Die "manifest invalid at row $n`: $row" }
+  }
+  # plain return: the caller wraps with @() and gets one element per pin (",$rows" would hand
+  # back a single nested array, so a 54-pin manifest would look like 1 pin to the loop)
+  return $rows
+}
+
+$manifestSource = ""
+if ($ManifestPath -ne "") {
+  $ModManifest = @(Read-ManifestPins $ManifestPath)
+  $manifestSource = $ManifestPath
+} elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "mods.json"))) {
+  $scriptModsJson = Join-Path $PSScriptRoot "mods.json"
+  $ModManifest = @(Read-ManifestPins $scriptModsJson)
+  $manifestSource = $scriptModsJson
+} else {
+  $manifestSource = "built-in pins in setup-spt.ps1"
+}
+Say "using manifest: $($ModManifest.Count) pins from $manifestSource" "Green"
 
 # ---------- silly Tarkov pun ticker (runs during long waits) ----------
 $puns = @(
@@ -162,13 +214,29 @@ function Stop-Ticker {
 }
 
 # ---------- 0. preflight ----------
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $principal.IsInRole("Administrators")) {
+$isAdmin = $false
+try {
+  $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  $isAdmin = $principal.IsInRole("Administrators")
+} catch {
+  $isAdmin = $false
+}
+if (-not $isAdmin) {
+  if ($NoElevate) {
+    # the app host is already elevated and captures THIS process' console - a RunAs relaunch would
+    # open a second window, leave the host with no output and hang its progress parser.
+    Die "needs administrator rights - the app runs this elevated; run it from an admin PowerShell instead."
+  }
   Say "needs an admin shell - asking Windows to elevate (click Yes on the UAC prompt)..."
+  $relaunchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath))
+  if ($PSBoundParameters.ContainsKey('InstallDir')) { $relaunchArgs += @('-InstallDir', ('"{0}"' -f $InstallDir)) }
+  if ($ServerHost -ne "10.4.20.2:6969") { $relaunchArgs += @('-ServerHost', $ServerHost) }
+  if ($EftPath -ne "") { $relaunchArgs += @('-EftPath', ('"{0}"' -f $EftPath)) }
+  if ($ArchiveDir -ne "") { $relaunchArgs += @('-ArchiveDir', ('"{0}"' -f $ArchiveDir)) }
+  if ($ManifestPath -ne "") { $relaunchArgs += @('-ManifestPath', ('"{0}"' -f $ManifestPath)) }
+  if ($Update) { $relaunchArgs += '-Update' }
   try {
-    Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList @(
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $PSCommandPath)
-    ) | Out-Null
+    Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -ArgumentList $relaunchArgs | Out-Null
     exit 0
   } catch {
     Die "elevation declined. Re-run from an ADMIN PowerShell: press Win+X -> Windows PowerShell (Admin), then: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`""
@@ -237,8 +305,14 @@ if (-not $Update) {
   if ($eftBuild -eq "") { Die "Could not read the game version from $eft\ConsistencyInfo - is the EFT install complete and updated?" }
   Say "EFT build: $eftBuild (SPT 4.1.6 wants $targetBuild)"
 } else {
-  Say "update mode - skipping EFT detection/copy/patcher" "Yellow"
-  if (-not (Test-Path "$InstallDir\EscapeFromTarkov.exe")) { Die "update mode but no existing install at $InstallDir." }
+  Say "update mode - reusing the existing install at $InstallDir (never copies EFT)" "Yellow"
+  if (-not (Test-Path "$InstallDir\EscapeFromTarkov.exe")) { Die "update mode but no existing install at $InstallDir - pass -InstallDir with the folder that holds EscapeFromTarkov.exe." }
+  $consistency = Get-Content "$InstallDir\ConsistencyInfo" -TotalCount 5 -ErrorAction SilentlyContinue | Out-String
+  if ($consistency -match '"Version"\s*:\s*"([0-9.]+)\.(\d+)"') { $eftBuild = $Matches[2] }
+  if ($eftBuild -eq "") {
+    Die "could not read the installed game build from $InstallDir\ConsistencyInfo - that file is missing or unreadable, so update mode cannot tell whether the downgrade patch is needed. Point -InstallDir at the SPT folder (the one with EscapeFromTarkov.exe)."
+  }
+  Say "installed build: $eftBuild (SPT 4.1.6 wants $targetBuild)"
 }
 
 # ---------- free-space gate (fresh need = EFT size + 25 GB headroom for patcher staging, SPT and mods) ----------
@@ -259,39 +333,46 @@ Say "build 2026-11-06-r3 - local-detect (recursive)"
 # ---------- 2. stage tools ----------
 $cache = Join-Path $env:LOCALAPPDATA "spt-setup-cache"
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
-$zr = Join-Path $cache "7zr.exe"
-if (-not (Test-Path $zr)) { curl.exe -sSL -o $zr $sevenZipR }
 
 function Get-File($url, $dest) {
   if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) { Say "cached: $(Split-Path -Leaf $dest)"; return }
-  # local-first: any archive dropped NEXT TO THIS SCRIPT wins over the network.
-  # exact-name match, else prefix match (e.g. 'SPT-4.1.6-40743-731d7a2.7z' serves 'SPT-4.1.6.7z')
+  # local-first: -ArchiveDir (searched recursively) wins over the network, then any archive
+  # dropped NEXT TO THIS SCRIPT. exact-name match, else prefix match
+  # (e.g. 'SPT-4.1.6-40743-731d7a2.7z' serves 'SPT-4.1.6.7z'), else version-token fuzzy.
   $want = [System.IO.Path]::GetFileNameWithoutExtension($dest)
   $wn = ($want -replace '[^A-Za-z0-9]', '').ToLower()
   $local = $null
-  if ($PSScriptRoot -and ($wn.Length -gt 0)) {
+  $localDirs = @()
+  if (($PSScriptRoot -or $ArchiveDir) -and ($wn.Length -gt 0)) {
     $ext = [System.IO.Path]::GetExtension($dest)
     $seen = @()
-    $exact = @()
-    $fuzzy = @()
     $walpha = ($want -replace '[^a-zA-Z]', '').ToLower()
     if ($walpha.Length -gt 3) { $walpha = $walpha.Substring(0, 3) }
     $wver = ""
     $mv = [regex]::Match($want, '\d+\.\d+\.\d+')
     if ($mv.Success) { $wver = ($mv.Value -replace '[^0-9]', '') }
-    # next to the script AND in nearby subfolders (offline\, spt-setup-cache\, ...)
-    foreach ($f in (Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Depth 2 -File -ErrorAction SilentlyContinue)) {
-      if (@(".7z", ".zip") -contains $f.Extension.ToLower()) { $seen += $f.Name }
-      if ($f.Extension -ine $ext) { continue }
-      $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
-      if ($cn.Length -eq 0) { continue }
-      if ($cn -eq $wn) { $exact += $f }
-      elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
-      elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
-      elseif (($wver.Length -ge 3) -and ($cn.Contains($wver)) -and ($walpha.Length -eq 0 -or $cn.Contains($walpha))) { $fuzzy += $f }
+    # search order: the app's -ArchiveDir first, then next to the script AND nearby subfolders
+    # (offline\, spt-setup-cache\, ...). First directory that yields a match wins.
+    $searchDirs = @()
+    if ($ArchiveDir) { $searchDirs += @{ Path = $ArchiveDir; Depth = 32 }; $localDirs += $ArchiveDir }
+    if ($PSScriptRoot) { $searchDirs += @{ Path = $PSScriptRoot; Depth = 2 }; $localDirs += $PSScriptRoot }
+    foreach ($sd in $searchDirs) {
+      if (-not (Test-Path -LiteralPath $sd.Path)) { continue }
+      $exact = @()
+      $fuzzy = @()
+      foreach ($f in (Get-ChildItem -LiteralPath $sd.Path -Recurse -Depth $sd.Depth -File -ErrorAction SilentlyContinue)) {
+        if (@(".7z", ".zip") -contains $f.Extension.ToLower()) { $seen += $f.Name }
+        if ($f.Extension -ine $ext) { continue }
+        $cn = ($f.BaseName -replace '[^A-Za-z0-9]', '').ToLower()
+        if ($cn.Length -eq 0) { continue }
+        if ($cn -eq $wn) { $exact += $f }
+        elseif ($cn.StartsWith($wn)) { $fuzzy += $f }
+        elseif (($cn.Length -ge 6) -and ($wn.StartsWith($cn))) { $fuzzy += $f }
+        elseif (($wver.Length -ge 3) -and ($cn.Contains($wver)) -and ($walpha.Length -eq 0 -or $cn.Contains($walpha))) { $fuzzy += $f }
+      }
+      if ($exact.Count -gt 0) { $local = @($exact | Sort-Object { $_.FullName.Length })[0]; break }
+      if ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0]; break }
     }
-    if ($exact.Count -gt 0) { $local = @($exact | Sort-Object { $_.FullName.Length })[0] }
-    elseif ($fuzzy.Count -gt 0) { $local = @($fuzzy | Sort-Object { ($_.BaseName -replace '[^A-Za-z0-9]', '').Length } -Descending)[0] }
     if (($null -eq $local) -and ($seen.Count -gt 0)) {
       Say ("no local match for " + (Split-Path -Leaf $dest) + " - archives found: " + ((@($seen) | Select-Object -Unique | Select-Object -First 8) -join ", ")) "Yellow"
     }
@@ -307,13 +388,27 @@ function Get-File($url, $dest) {
   } catch {
     Say "downloading $(Split-Path -Leaf $dest)"
   }
-  curl.exe -sSL --retry 3 --retry-delay 2 -o $dest $url
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $dest)) { Die "download failed: $url" }
+  # stage to .part and only promote on a clean exit: a killed curl must never leave a
+  # truncated file in the cache that the next run accepts as "cached:".
+  $part = "$dest.part"
+  Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+  curl.exe -sSL --retry 3 --retry-delay 2 -o $part $url
+  $got = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $part) -and ((Get-Item -LiteralPath $part).Length -gt 0)
+  if (-not $got) {
+    Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
+    $where = if ($localDirs.Count -gt 0) { $localDirs -join ', ' } else { "no local archive dir (-ArchiveDir not set)" }
+    Die "download failed: $(Split-Path -Leaf $dest) - none matched in $where, and the upstream copy at $url did not download. Put the archive in one of those folders or check the network."
+  }
+  Move-Item -LiteralPath $part -Destination $dest -Force
 }
+
+$zr = Join-Path $cache "7zr.exe"
+Get-File $sevenZipR $zr
+if (-not (Test-Path $zr)) { Die "7zr.exe unavailable - drop 7zr.exe in -ArchiveDir or next to this script and re-run." }
 
 # ---------- patcher preflight (BEFORE any copying: fail early, fail clean) ----------
 $patch = $null; $pzip = $null; $pstage = $null
-if (-not $Update -and $eftBuild -ne $targetBuild) {
+if ($eftBuild -ne $targetBuild) {
   Get-File "$($patchHosts[0])/mirrors.json" (Join-Path $cache "mirrors.json")
   $patches = (Get-Content (Join-Path $cache "mirrors.json") -Raw | ConvertFrom-Json).Patches
   $patch = $patches | Where-Object { $_.SourceClientVersion -eq [int]$eftBuild -and $_.TargetClientVersion -eq [int]$targetBuild } | Select-Object -First 1
@@ -329,14 +424,15 @@ if (-not $Update -and $eftBuild -ne $targetBuild) {
   $patchBytes = if ($phead) { [int64]"$($phead | Select-Object -First 1)" } else { 10GB }
   $needBytes = $patchBytes * 3 + 2GB
   if ($drive.Free -lt $needBytes) {
-    Die "not enough space for the downgrade patch on $($drive.Name): - need $([int]($needBytes/1GB)) GB free (3x patch size + margin), have $([int]($drive.Free/1GB)) GB. Free up space and re-run - nothing has been copied yet."
+    $mode = if ($Update) { " in update mode" } else { "" }
+    Die "not enough space for the downgrade patch$mode on $($drive.Name): - need $([int]($needBytes/1GB)) GB free (3x patch size + margin), have $([int]($drive.Free/1GB)) GB. Free up space and re-run - nothing has been copied yet."
   }
-  Say "patcher preflight ok ($([int]($patchBytes/1MB)) MB patch, staging on $($drive.Name):)" "Green"
+  Say "patcher preflight ok ($([int]($patchBytes/1MB)) MB patch, staging on $($drive.Name):)$(if ($Update) {' - update mode'})" "Green"
 }
 
 # ---------- 3. copy EFT ----------
 if ($Update) {
-  Say "existing install at $InstallDir - refreshing Fika + mod layer only" "Yellow"
+  Say "existing install at $InstallDir - in-place update (game patch only on a build mismatch, then SPT/Fika/mods)" "Yellow"
 } else {
   if (Test-Path "$InstallDir\EscapeFromTarkov.exe") { Die "$InstallDir already contains game files. Use -Update to refresh mods only, or pick an empty folder." }
   Say "copying EFT -> $InstallDir (~57 GB, coffee time)..."
@@ -348,31 +444,39 @@ if ($Update) {
   Say "EFT copy complete" "Green"
 }
 
-# ---------- 4. downgrade patcher (only when build mismatch) ----------
-if (-not $Update -and $eftBuild -ne $targetBuild) {
+# ---------- 4. downgrade patcher (only when build mismatch, fresh install OR update) ----------
+if ($eftBuild -ne $targetBuild) {
   Say "EFT build $eftBuild != $targetBuild - downloading downgrade patcher..."
   Start-Ticker "downgrading the client"
-  New-Item -ItemType Directory -Force -Path $pstage | Out-Null
-  Get-File $patch.Mirrors[0].Link $pzip
-  Say "extracting patcher..."
-  & $zr x -y "-o$($pstage)\unpack" $pzip | Out-Null
-  if ($LASTEXITCODE -gt 1) { Die "patcher archive extraction failed (disk full?). 7z exit $LASTEXITCODE." }
-  # official flow: a Patcher* subdir (or archive root) holds patcher.exe + SPT_Patches
-  $pdir = Get-ChildItem "$pstage\unpack" -Directory -Filter "Patcher*" | Select-Object -First 1
-  if (-not $pdir) { $pdir = Get-Item "$pstage\unpack" }
-  robocopy $pdir.FullName $InstallDir /E /MOVE /NFL /NDL /NJH /NJS /NP | Out-Null
-  $patcherExe = Join-Path $InstallDir "patcher.exe"
-  if (-not (Test-Path $patcherExe)) { Die "patcher.exe not found after extraction." }
-  Say "running patcher.exe autoclose (exit 10 = success)..."
-  $proc = Start-Process -FilePath $patcherExe -ArgumentList "autoclose" -WorkingDirectory $InstallDir -PassThru -Wait
-  Stop-Ticker
-  if ($proc.ExitCode -ne 10) { Die "patcher exited with code $($proc.ExitCode) (10 = success)." }
-  Say "patch applied - cleaning up patcher files" "Green"
-  Remove-Item $patcherExe -Force
-  Remove-Item (Join-Path $InstallDir "SPT_Patches") -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item (Join-Path $InstallDir "patcher.log") -Force -ErrorAction SilentlyContinue
-  Remove-Item $pstage -Recurse -Force -ErrorAction SilentlyContinue
-} elseif (-not $Update) {
+  # a killed previous run can leave GBs of unpacked deltas on the install drive - start clean
+  if ($pstage -and (Test-Path $pstage)) { Remove-Item $pstage -Recurse -Force -ErrorAction SilentlyContinue }
+  try {
+    New-Item -ItemType Directory -Force -Path $pstage | Out-Null
+    Get-File $patch.Mirrors[0].Link $pzip
+    Say "extracting patcher..."
+    & $zr x -y "-o$($pstage)\unpack" $pzip | Out-Null
+    if ($LASTEXITCODE -gt 1) { Die "patcher archive extraction failed (disk full?). 7z exit $LASTEXITCODE." }
+    # official flow: a Patcher* subdir (or archive root) holds patcher.exe + SPT_Patches
+    $pdir = Get-ChildItem "$pstage\unpack" -Directory -Filter "Patcher*" | Select-Object -First 1
+    if (-not $pdir) { $pdir = Get-Item "$pstage\unpack" }
+    robocopy $pdir.FullName $InstallDir /E /MOVE /NFL /NDL /NJH /NJS /NP | Out-Null
+    $patcherExe = Join-Path $InstallDir "patcher.exe"
+    if (-not (Test-Path $patcherExe)) { Die "patcher.exe not found after extraction." }
+    Say "running patcher.exe autoclose (exit 10 = success)..."
+    $proc = Start-Process -FilePath $patcherExe -ArgumentList "autoclose" -WorkingDirectory $InstallDir -PassThru -Wait
+    Stop-Ticker
+    if ($proc.ExitCode -ne 10) { Die "patcher exited with code $($proc.ExitCode) (10 = success)." }
+    Say "patch applied - cleaning up patcher files" "Green"
+    Remove-Item $patcherExe -Force
+    Remove-Item (Join-Path $InstallDir "SPT_Patches") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "patcher.log") -Force -ErrorAction SilentlyContinue
+  } finally {
+    # success AND every Die path: a failed/cancelled patch must never leave GBs of staged
+    # deltas on the install drive (the game tree itself is only touched by patcher.exe)
+    Stop-Ticker
+    if ($pstage -and (Test-Path $pstage)) { Remove-Item $pstage -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+} else {
   Say "EFT build already matches $targetBuild - no patching needed" "Green"
 }
 
