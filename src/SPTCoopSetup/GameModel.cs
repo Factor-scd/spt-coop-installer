@@ -33,6 +33,14 @@ internal sealed class GameModel
     private const float PlatformMaxWidth = PlatformBaseWidth + 12f;
     private const float MinGap = 55f;
     private const float MaxGap = 95f;
+
+    /// <summary>
+    /// Fraction of the ballistic budget a platform gap is allowed to use. The full arc assumes the
+    /// player is already standing at the correct edge and holds the stick down for the whole
+    /// window; a real bounce has to be positioned first, so only 80 % of the travel counts.
+    /// </summary>
+    private const float ReachSafety = 0.8f;
+
     private const float CameraAnchorRatio = 0.45f;
     private const float RecycleBelowMargin = 200f;
     private const float AboveViewportMargin = 200f;
@@ -40,6 +48,76 @@ internal sealed class GameModel
     private const int AutoRestartTicks = 125;
     private const int MaxPlatforms = 320;
     private const int GuardLimit = 64;
+
+    /// <summary>
+    /// Highest a single auto-bounce can lift the player, in pixels: the apex of the ballistic arc,
+    /// <c>v0^2 / (2g)</c>. Every platform gap has to fit under this or a run can stall forever on
+    /// one platform, so the generator and the tests share this number.
+    /// </summary>
+    public static float MaxRise
+    {
+        get { return BounceVelocity * BounceVelocity / (2f * -Gravity); }
+    }
+
+    /// <summary>
+    /// Horizontal distance the player can cover during the part of a bounce where the feet are at
+    /// or above a rise of <paramref name="rise"/> pixels. That window is
+    /// <c>2 * sqrt(v0^2 - 2*g*rise) / g</c> seconds long, so a 95 px step buys ~114 px of travel
+    /// and a 55 px step ~169 px. Returns 0 for a rise at or past <see cref="MaxRise"/>, and reads a
+    /// negative rise as the whole arc.
+    /// </summary>
+    public static float ReachableDistance(float rise)
+    {
+        if (rise >= MaxRise) return 0f;
+        if (rise < 0f) rise = 0f;
+
+        var radicand = BounceVelocity * BounceVelocity - 2f * -Gravity * rise;
+        if (radicand < 0f) radicand = 0f;
+
+        var secondsAbove = 2f * MathF.Sqrt(radicand) / -Gravity;
+        return MoveSpeed * secondsAbove;
+    }
+
+    /// <summary>
+    /// True when a player standing on <paramref name="lower"/> can get to <paramref name="upper"/>
+    /// with one bounce. Both rectangles live in the same space with y growing upward (the world
+    /// tops the generator stacks on). The horizontal gap is wrap-aware, because the player's centre
+    /// wraps modulo the viewport width, and only <see cref="ReachSafety"/> of the ballistic budget
+    /// counts.
+    /// </summary>
+    public static bool IsReachable(in RectangleF lower, in RectangleF upper, int viewportWidth)
+    {
+        var rise = upper.Y - lower.Y;
+        if (rise <= 0f || rise > MaxRise) return false;
+
+        if (viewportWidth < 1) viewportWidth = 1;
+
+        var gap = HorizontalGap(lower.X, lower.X + lower.Width, upper.X, upper.X + upper.Width, viewportWidth);
+        return gap <= ReachableDistance(rise) * ReachSafety;
+    }
+
+    /// <summary>
+    /// Shortest distance between two horizontal intervals on a ring of circumference
+    /// <paramref name="viewportWidth"/>; 0 when they touch or overlap.
+    /// </summary>
+    private static float HorizontalGap(float aLeft, float aRight, float bLeft, float bRight, int viewportWidth)
+    {
+        var gap = float.MaxValue;
+        for (var shift = -1; shift <= 1; shift++)
+        {
+            var left = bLeft + shift * viewportWidth;
+            var right = bRight + shift * viewportWidth;
+
+            float candidate;
+            if (right < aLeft) candidate = aLeft - right;
+            else if (left > aRight) candidate = left - aRight;
+            else candidate = 0f;
+
+            if (candidate < gap) gap = candidate;
+        }
+
+        return gap;
+    }
 
     private readonly Platform[] _platformState = new Platform[MaxPlatforms];
     private readonly RectangleF[] _screen = new RectangleF[MaxPlatforms];
@@ -291,7 +369,11 @@ internal sealed class GameModel
             if (top > ceiling) break;
 
             var width = NextWidth();
-            AddPlatform(NextX(width), top, width);
+
+            // Stack on the platform below: the random x is kept when one bounce covers the gap,
+            // otherwise it is pulled in until the step is climbable.
+            var centreX = ReachableCentre(NextX(width), width, _platformState[_platformCount - 1], top);
+            AddPlatform(centreX, top, width);
         }
 
         // Platforms are readable straight after construction, before the first tick.
@@ -456,9 +538,77 @@ internal sealed class GameModel
         var top = HighestTop();
         if (top < _cameraY) top = _cameraY;
 
-        platform.Top = top + NextGap();
-        platform.Width = NextWidth();
-        platform.CenterX = NextX(platform.Width);
+        var newTop = top + NextGap();
+        var width = NextWidth();
+        var centreX = NextX(width);
+
+        // The anchor is the highest platform OTHER than this recycled slot, so a platform that is
+        // already the top of the stack still stacks on the one below it (the chain stays climbable).
+        var anchorIndex = HighestPlatformIndex(index);
+        if (anchorIndex >= 0)
+        {
+            centreX = ReachableCentre(centreX, width, _platformState[anchorIndex], newTop);
+        }
+
+        platform.Top = newTop;
+        platform.Width = width;
+        platform.CenterX = centreX;
+    }
+
+    /// <summary>
+    /// Index of the highest platform, skipping <paramref name="exclude"/>; -1 when nothing is left.
+    /// </summary>
+    private int HighestPlatformIndex(int exclude)
+    {
+        var index = -1;
+        var highest = float.MinValue;
+        for (var i = 0; i < _platformCount; i++)
+        {
+            if (i == exclude) continue;
+            if (_platformState[i].Top <= highest) continue;
+
+            highest = _platformState[i].Top;
+            index = i;
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Picks the centre x for a platform of <paramref name="width"/> placed at world height
+    /// <paramref name="top"/> so that it is actually reachable from <paramref name="anchor"/>.
+    /// The random candidate survives whenever one bounce crosses the gap (which includes the case
+    /// where the near edge sits just across the viewport seam). Otherwise the platform is pulled in
+    /// to the edge of the bounce on whichever side the candidate landed, wrap-aware, and nudged
+    /// back inside the legal centre band.
+    /// </summary>
+    private float ReachableCentre(float candidateX, float width, in Platform anchor, float top)
+    {
+        var anchorBounds = Bounds(anchor.CenterX, anchor.Width, anchor.Top);
+        if (IsReachable(anchorBounds, Bounds(candidateX, width, top), _viewportWidth)) return candidateX;
+
+        var half = width * 0.5f;
+        var bandMin = half;
+        var bandMax = _viewportWidth - half;
+        if (bandMax <= bandMin) return _viewportWidth * 0.5f;
+
+        // 1 % shy of the budget so the boundary case never lands on the wrong side of float rounding.
+        var span = anchor.Width * 0.5f + ReachableDistance(top - anchor.Top) * ReachSafety * 0.99f + half;
+
+        // Shortest wrap offset from the anchor decides which edge to pull the platform towards.
+        var delta = candidateX - anchor.CenterX;
+        delta -= MathF.Round(delta / _viewportWidth) * _viewportWidth;
+
+        var pulled = Math.Clamp(anchor.CenterX + (delta < 0f ? -span : span), bandMin, bandMax);
+        if (IsReachable(anchorBounds, Bounds(pulled, width, top), _viewportWidth)) return pulled;
+
+        // Straight above the anchor is always inside one bounce; clamping only keeps it on screen.
+        return Math.Clamp(anchor.CenterX, bandMin, bandMax);
+    }
+
+    private static RectangleF Bounds(float centreX, float width, float top)
+    {
+        return new RectangleF(centreX - width * 0.5f, top, width, PlatformHeight);
     }
 
     private void ProjectPlatforms()
@@ -517,7 +667,11 @@ internal sealed class GameModel
 
     private float NextGap()
     {
-        return MinGap + (NextUInt() % 41u);
+        // Hard cap at 90 % of the bounce apex: a gap taller than the arc can never be climbed, so
+        // the clamp makes the invariant explicit even if MinGap/MaxGap are ever retuned.
+        var gap = MinGap + (NextUInt() % 41u);
+        var cap = MaxRise * 0.9f;
+        return gap > cap ? cap : gap;
     }
 
     private float NextX(float width)

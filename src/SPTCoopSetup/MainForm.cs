@@ -6,11 +6,16 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
+// The form exposes a LayoutState property (the current shape) which would hide the type of the
+// same name inside this class; the alias keeps the geometry helpers reachable.
+using LayoutStateModel = SPTCoopSetup.LayoutState;
+
 namespace SPTCoopSetup;
 
 /// <summary>
-/// The installer window: two columns. The left column carries mode, folder, progress and the
-/// collapsible log drawer; the right column carries a playable game while the engine works.
+/// The installer window. It has two shapes: idle, where the configuration column fills the window
+/// and the game does not exist at all, and running, where a 350 ms reveal eases the game column
+/// open next to it. The left column carries mode, folder, progress and the collapsible log drawer.
 /// </summary>
 internal sealed class MainForm : Form, IMessageFilter
 {
@@ -33,6 +38,12 @@ internal sealed class MainForm : Form, IMessageFilter
     private readonly Arguments _arguments;
     private readonly System.Windows.Forms.Timer _clock = new() { Interval = 1000 };
 
+    /// <summary>Drives the idle/running reveal at ~60 fps; only alive while the reveal is in flight.</summary>
+    private readonly System.Windows.Forms.Timer _expandTimer = new() { Interval = 16 };
+
+    /// <summary>Elapsed source for the reveal, so a late tick still lands on the right width.</summary>
+    private readonly Stopwatch _expandClock = new();
+
     /// <summary>Everything this window has shown, kept for "Copy log" and the final report.</summary>
     private readonly List<string> _logLines = new();
 
@@ -45,8 +56,11 @@ internal sealed class MainForm : Form, IMessageFilter
     /// <summary>The persistent per-run file; every line the pane shows is mirrored into it.</summary>
     private readonly RunLog _runLog;
 
-    /// <summary>The playable game in the right column; never blocks the engine.</summary>
-    private readonly GameView _gameView;
+    /// <summary>
+    /// The playable game in the right column. Null while idle: the game does not exist until the
+    /// window actually reveals it, so an idle window costs no game CPU and no model memory.
+    /// </summary>
+    private GameView? _gameView;
 
     private readonly DarkRadioButton _modeFull = new() { Text = "Full install (game + SPT + mods)", AutoSize = true, Checked = true };
     private readonly DarkRadioButton _modeMods = new() { Text = "Mods only (existing SPT install)", AutoSize = true };
@@ -81,7 +95,14 @@ internal sealed class MainForm : Form, IMessageFilter
     private TableLayoutPanel _root = null!;
     private TableLayoutPanel _left = null!;
     private TableLayoutPanel _drawerLayout = null!;
+    private Control _divider = null!;
+    private Control _gameColumn = null!;
+    private DarkPanel _gameFrame = null!;
     private Font? _titleFont;
+
+    private bool _expanding;
+    private float _expandFrom;
+    private float _expandTo;
 
     private bool _drawerExpanded;
     private bool _drawerApplied;
@@ -105,15 +126,11 @@ internal sealed class MainForm : Form, IMessageFilter
         _runLog = RunLog.Create(_arguments.Raw.ToArray(), kind: kind);
         _runLog.StartBanner(Application.ProductVersion, kind);
 
-        _gameView = new GameView(new GameModel(
-            _arguments.PreviewPath is not null ? GameModel.PreviewSeed : Environment.TickCount,
-            480,
-            600));
-
         BuildLayout();
         ApplyArguments();
 
         _clock.Tick += OnClockTick;
+        _expandTimer.Tick += OnExpandTick;
         FormClosing += OnFormClosing;
         FormClosed += OnFormClosed;
         DpiChanged += OnDpiChanged;
@@ -126,10 +143,87 @@ internal sealed class MainForm : Form, IMessageFilter
 
         // Deliberate breadcrumb: this is how a user finds the file after a failed install.
         AppendAppLine("run log: " + (_runLog.Path ?? "unavailable"));
+
+        // The window starts in the single-column shape; record it so a log says which shape ran.
+        AppendLayoutLine(LayoutKind.Idle);
     }
 
     /// <summary>Process exit code: the engine's code once a run finished, 2 for a refused run.</summary>
     public int ExitCode { get; private set; }
+
+    // ---------------------------------------------------------------- layout surface
+
+    /// <summary>Which shape the window is showing: one config column while idle, two while running.</summary>
+    public LayoutKind LayoutState { get; private set; } = LayoutKind.Idle;
+
+    /// <summary>Rounded width of the configuration column, in pixels, as currently laid out.</summary>
+    public int ConfigColumnWidth => _root is null
+        ? 0
+        : (int)MathF.Round(_root.ColumnStyles[0].Width, MidpointRounding.AwayFromZero);
+
+    /// <summary>Width the game column gets once the reveal is done; 0 while the window is idle.</summary>
+    public int GameColumnWidth
+    {
+        get
+        {
+            if (LayoutState != LayoutKind.Running || _root is null)
+            {
+                return 0;
+            }
+
+            return (int)MathF.Round(
+                LayoutStateModel.RightWidth(ContentWidth(), ConfigColumnWidth),
+                MidpointRounding.AwayFromZero);
+        }
+    }
+
+    /// <summary>True only while the game column is on screen with a live game inside it.</summary>
+    public bool GameVisible => LayoutState == LayoutKind.Running && _gameView is { Visible: true };
+
+    /// <summary>
+    /// Switches the window between the single-column and the two-column shape. <paramref name="animate"/>
+    /// false applies the final geometry at once (the headless preview path needs a settled frame);
+    /// true runs the 350 ms reveal. Calling it with the shape already applied is a no-op.
+    /// </summary>
+    public void SetLayoutState(LayoutKind kind, bool animate)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        var changed = LayoutState != kind;
+        LayoutState = kind;
+
+        if (kind == LayoutKind.Idle)
+        {
+            CancelExpansion();
+            ApplyIdleLayout();
+            return;
+        }
+
+        if (!animate)
+        {
+            SnapToRunning(announce: changed);
+            return;
+        }
+
+        if (_expanding)
+        {
+            // A resize during the reveal moves the target; it never restarts the animation.
+            _expandTo = LayoutStateModel.TargetLeftWidth(ContentWidth(), DpiScale);
+            return;
+        }
+
+        if (!changed)
+        {
+            // Already two columns: a second run must not re-animate.
+            SnapToRunning(announce: false);
+            return;
+        }
+
+        BeginExpansion();
+    }
 
     // ---------------------------------------------------------------- window surface
 
@@ -203,48 +297,86 @@ internal sealed class MainForm : Form, IMessageFilter
         };
 
         // [0] left column - Absolute, recomputed on every resize (see UpdateLeftColumnWidth).
-        // [1] the 1px divider, [2] the game gets everything that is left.
+        // [1] the divider, [2] the game gets everything that is left. Both right-hand columns are
+        // collapsed to nothing while the window is idle, so the config column really fills it.
         _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 560f));
-        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1f));
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0f));
         _root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         _root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
         _left = BuildLeftColumn();
 
+        _divider = BuildDivider();
+        _gameColumn = BuildGameColumn();
+
         _root.Controls.Add(_left, 0, 0);
-        _root.Controls.Add(BuildDivider(), 1, 0);
-        _root.Controls.Add(BuildGameColumn(), 2, 0);
+        _root.Controls.Add(_divider, 1, 0);
+        _root.Controls.Add(_gameColumn, 2, 0);
 
         Controls.Add(_root);
         _root.SizeChanged += (_, _) => UpdateLeftColumnWidth();
 
         ResumeLayout(true);
+        ApplyIdleLayout();
         UpdateLeftColumnWidth();
         PerformLayout();
     }
 
     /// <summary>
-    /// Clamps the left column between 520 and 640 logical pixels (DPI scaled) and never lets it
-    /// take more than 55% of the content width, so neither column can starve the other.
+    /// Single-column shape: no divider, no game column, no left margin, so the configuration really
+    /// fills the window instead of leaving a strip of dead space beside it.
     /// </summary>
-    private void UpdateLeftColumnWidth()
+    private void ApplyIdleLayout()
+    {
+        _left.Margin = new Padding(0);
+        _root.ColumnStyles[1].SizeType = SizeType.Absolute;
+        _root.ColumnStyles[1].Width = 0f;
+        _divider.Visible = false;
+        _gameColumn.Visible = false;
+        ApplyLeftWidth(LayoutStateModel.IdleLeftWidth(ContentWidth()));
+    }
+
+    /// <summary>Two-column chrome: divider back to one pixel, game column shown, left margin restored.</summary>
+    private void ApplyRunningChrome()
+    {
+        _left.Margin = new Padding(0, 0, 12, 0);
+        _root.ColumnStyles[1].SizeType = SizeType.Absolute;
+        _root.ColumnStyles[1].Width = LayoutStateModel.DividerWidth;
+        _divider.Visible = true;
+        _gameColumn.Visible = true;
+    }
+
+    /// <summary>DPI factor used to scale the 520-640 band; 1.0 when the handle does not exist yet.</summary>
+    private float DpiScale
+    {
+        get
+        {
+            var dpi = DeviceDpi > 0 ? DeviceDpi : 96;
+            return dpi / 96f;
+        }
+    }
+
+    /// <summary>Content width inside the window padding, in logical pixels.</summary>
+    private float ContentWidth()
+    {
+        if (_root is null)
+        {
+            return LayoutStateModel.ContentWidth(ClientSize.Width, 0);
+        }
+
+        // Before the handle exists the root panel is still 0 wide: fall back to the form so the
+        // launch breadcrumb records a real width instead of "1".
+        var width = _root.ClientSize.Width > 0 ? _root.ClientSize.Width : ClientSize.Width;
+        return LayoutStateModel.ContentWidth(width, _root.Padding.Horizontal);
+    }
+
+    /// <summary>Writes a column width, skipping the layout churn when it is already there.</summary>
+    private void ApplyLeftWidth(float width)
     {
         if (_root is null)
         {
             return;
         }
-
-        var dpi = DeviceDpi > 0 ? DeviceDpi : 96;
-        var scale = dpi / 96f;
-        var contentWidth = Math.Max(1, _root.ClientSize.Width - _root.Padding.Horizontal);
-
-        var minimum = 520f * scale;
-        var maximum = 640f * scale;
-        var ideal = MathF.Round(contentWidth * 0.46f, MidpointRounding.AwayFromZero);
-        var width = MathF.Max(minimum, MathF.Min(ideal, maximum));
-
-        var cap = MathF.Max(minimum, contentWidth * 0.55f);
-        width = MathF.Min(width, cap);
 
         var column = _root.ColumnStyles[0];
         if (column.SizeType == SizeType.Absolute && Math.Abs(column.Width - width) < 0.5f)
@@ -256,12 +388,152 @@ internal sealed class MainForm : Form, IMessageFilter
         column.Width = width;
     }
 
+    /// <summary>
+    /// Recomputes the configuration column for the current shape and size: full width while idle,
+    /// the clamped running width otherwise, or just a moved target while the reveal is in flight.
+    /// </summary>
+    private void UpdateLeftColumnWidth()
+    {
+        if (_root is null)
+        {
+            return;
+        }
+
+        if (LayoutState == LayoutKind.Idle)
+        {
+            ApplyLeftWidth(LayoutStateModel.IdleLeftWidth(ContentWidth()));
+            return;
+        }
+
+        if (_expanding)
+        {
+            // A resize mid-reveal must not fight the timer: move where it is heading instead.
+            _expandTo = LayoutStateModel.TargetLeftWidth(ContentWidth(), DpiScale);
+            return;
+        }
+
+        ApplyLeftWidth(LayoutStateModel.TargetLeftWidth(ContentWidth(), DpiScale));
+    }
+
     private static Control BuildDivider() => new Panel
     {
         Dock = DockStyle.Fill,
         Margin = Padding.Empty,
         BackColor = Theme.Border,
     };
+
+    // ---------------------------------------------------------------- idle -> running reveal
+
+    /// <summary>Starts the 350 ms reveal from the current (idle) width to the running target.</summary>
+    private void BeginExpansion()
+    {
+        EnsureGameCreated();
+        ApplyRunningChrome();
+
+        // Showing the column fires GameView.OnVisibleChanged, which would start the simulation
+        // while the window is still moving; the finishing tick owns that.
+        _gameView?.StopLoop();
+
+        _expandFrom = _root.ColumnStyles[0].Width;
+        _expandTo = LayoutStateModel.TargetLeftWidth(ContentWidth(), DpiScale);
+
+        _expanding = true;
+        _expandClock.Restart();
+        _expandTimer.Start();
+    }
+
+    /// <summary>
+    /// One reveal frame: read the stopwatch, ease the column down and let the table lay itself out.
+    /// No control is created or destroyed here and nothing blocks the UI thread.
+    /// </summary>
+    private void OnExpandTick(object? sender, EventArgs e)
+    {
+        if (!_expanding)
+        {
+            _expandTimer.Stop();
+            return;
+        }
+
+        var elapsed = (int)_expandClock.ElapsedMilliseconds;
+        if (LayoutStateModel.AnimationComplete(elapsed))
+        {
+            FinishExpansion(announce: true);
+            return;
+        }
+
+        ApplyLeftWidth(LayoutStateModel.LeftWidthAt(_expandFrom, _expandTo, elapsed));
+    }
+
+    /// <summary>
+    /// Settles the reveal: snap to the target, stop the timer and only now start the simulation,
+    /// so the game never ticks while it is still off the settled layout.
+    /// </summary>
+    private void FinishExpansion(bool announce)
+    {
+        CancelExpansion();
+        ApplyLeftWidth(LayoutStateModel.TargetLeftWidth(ContentWidth(), DpiScale));
+        StartGameLoop();
+
+        if (announce)
+        {
+            AppendLayoutLine(LayoutKind.Running);
+        }
+    }
+
+    /// <summary>Applies the final two-column geometry at once, with no animation.</summary>
+    private void SnapToRunning(bool announce)
+    {
+        CancelExpansion();
+        EnsureGameCreated();
+        ApplyRunningChrome();
+        FinishExpansion(announce);
+    }
+
+    /// <summary>Stops the reveal timer in every exit path; safe to call when nothing is running.</summary>
+    private void CancelExpansion()
+    {
+        _expandTimer.Stop();
+        _expandClock.Reset();
+        _expanding = false;
+    }
+
+    private void StartGameLoop() => _gameView?.StartLoop();
+
+    /// <summary>
+    /// Builds the game lazily. While idle there is no model and no timer at all, which is what
+    /// keeps an idle window at zero game CPU.
+    /// </summary>
+    private void EnsureGameCreated()
+    {
+        if (_gameView is not null)
+        {
+            return;
+        }
+
+        var view = new GameView(new GameModel(
+            _arguments.PreviewPath is not null ? GameModel.PreviewSeed : Environment.TickCount,
+            480,
+            600))
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+        };
+
+        _gameView = view;
+        _gameFrame.Controls.Add(view);
+
+        // If the column is already on screen the add above made the control visible, and
+        // OnVisibleChanged started the loop; the reveal decides when it may actually run.
+        view.StopLoop();
+    }
+
+    /// <summary>Records the current shape in the pane and in the run log, so a bug report carries it.</summary>
+    private void AppendLayoutLine(LayoutKind kind)
+    {
+        var line = LayoutStateModel.LogLine(kind, ConfigColumnWidth, GameColumnWidth);
+        AppendAppLine(line);
+        _runLog.Info(line);
+    }
 
     private TableLayoutPanel BuildLeftColumn()
     {
@@ -683,7 +955,8 @@ internal sealed class MainForm : Form, IMessageFilter
         _gameCaptionLabel.Margin = new Padding(0, 0, 0, 8);
 
         // One rounded panel: the game canvas draws its own rounded frame inside this hairline.
-        var frame = new DarkPanel
+        // The frame exists from launch; the game is added to it only when the window reveals it.
+        _gameFrame = new DarkPanel
         {
             Dock = DockStyle.Fill,
             AutoSize = false,
@@ -691,12 +964,8 @@ internal sealed class MainForm : Form, IMessageFilter
             Margin = Padding.Empty,
         };
 
-        _gameView.Dock = DockStyle.Fill;
-        _gameView.Margin = Padding.Empty;
-        frame.Controls.Add(_gameView);
-
         column.Controls.Add(_gameCaptionLabel, 0, 0);
-        column.Controls.Add(frame, 0, 1);
+        column.Controls.Add(_gameFrame, 0, 1);
         return column;
     }
 
@@ -817,15 +1086,19 @@ internal sealed class MainForm : Form, IMessageFilter
     {
         base.OnShown(e);
 
+        // The preview host sets the size and the shape after Show(), so the shape asked for on the
+        // command line has to be applied here, with no animation: a render wants a settled frame.
         if (_arguments.PreviewPath is not null)
         {
-            // Deterministic mid-play frame; the preview must not animate.
-            _gameView.PrimeForPreview();
-            _gameView.StopLoop();
-        }
-        else
-        {
-            _gameView.StartLoop();
+            SetLayoutState(_arguments.PreviewState ?? LayoutKind.Running, animate: false);
+
+            if (LayoutState == LayoutKind.Running)
+            {
+                // Deterministic mid-play frame; the preview must not animate or tick.
+                EnsureGameCreated();
+                _gameView!.PrimeForPreview();
+                _gameView!.StopLoop();
+            }
         }
 
         if (_arguments.PreviewPath is null && _arguments.ShouldStartImmediately)
@@ -838,13 +1111,13 @@ internal sealed class MainForm : Form, IMessageFilter
     protected override void OnActivated(EventArgs e)
     {
         base.OnActivated(e);
-        _gameView.SetWindowActive(true);
+        _gameView?.SetWindowActive(true);
     }
 
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        _gameView.SetWindowActive(false);
+        _gameView?.SetWindowActive(false);
     }
 
     protected override void OnResize(EventArgs e)
@@ -854,7 +1127,7 @@ internal sealed class MainForm : Form, IMessageFilter
         UpdateLeftColumnWidth();
 
         // Minimising must pause the simulation, not keep it running off-screen.
-        _gameView.SetWindowActive(WindowState != FormWindowState.Minimized);
+        _gameView?.SetWindowActive(WindowState != FormWindowState.Minimized);
     }
 
     // ---------------------------------------------------------------- key routing
@@ -873,7 +1146,7 @@ internal sealed class MainForm : Form, IMessageFilter
     {
         var isKeyMessage = m.Msg is WmKeyDown or WmKeyUp or WmSysKeyDown or WmSysKeyUp;
 
-        if (!isKeyMessage || !_gameView.Visible || IsTextEntryFocused())
+        if (!isKeyMessage || _gameView is not { Visible: true } || IsTextEntryFocused())
         {
             return false;
         }
@@ -881,7 +1154,7 @@ internal sealed class MainForm : Form, IMessageFilter
         var key = (Keys)((int)m.WParam & (int)Keys.KeyCode);
         var down = m.Msg is WmKeyDown or WmSysKeyDown;
 
-        return key is not (Keys.Tab or Keys.Escape or Keys.Enter) && _gameView.HandleKey(key, down);
+        return key is not (Keys.Tab or Keys.Escape or Keys.Enter) && _gameView!.HandleKey(key, down);
     }
 
     /// <summary>True while the folder box, the log pane or the report pane owns the keyboard.</summary>
@@ -1080,6 +1353,9 @@ internal sealed class MainForm : Form, IMessageFilter
         }
 
         _clock.Start();
+
+        // The engine is actually running now (not merely requested): make room for the game.
+        SetLayoutState(LayoutKind.Running, animate: true);
     }
 
     private void OnCancelClicked(object? sender, EventArgs e)
@@ -1205,6 +1481,13 @@ internal sealed class MainForm : Form, IMessageFilter
             }
 
             return;
+        }
+
+        // A run can end before the reveal has finished: land on the final two-column layout rather
+        // than let the timer keep easing a window that already reports a result.
+        if (_expanding)
+        {
+            SnapToRunning(announce: true);
         }
 
         var elapsed = DateTime.UtcNow - _startedUtc;
@@ -1495,6 +1778,9 @@ internal sealed class MainForm : Form, IMessageFilter
 
     private void OnFormClosed(object? sender, FormClosedEventArgs e)
     {
+        // Stop the reveal before the window goes: a queued tick must never touch a dead form.
+        // The timer object itself is disposed by Dispose(bool).
+        CancelExpansion();
         _clock.Stop();
         _clock.Dispose();
         _runner?.Dispose();
@@ -1509,6 +1795,9 @@ internal sealed class MainForm : Form, IMessageFilter
         if (disposing)
         {
             Application.RemoveMessageFilter(this);
+            CancelExpansion();
+            _expandTimer.Tick -= OnExpandTick;
+            _expandTimer.Dispose();
             _clock.Dispose();
             _runner?.Dispose();
             _runner = null;

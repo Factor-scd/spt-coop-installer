@@ -70,7 +70,7 @@ if command -v dotnet >/dev/null 2>&1; then
   fi
   # Every host-side suite must have actually run: a suite that silently stopped being invoked
   # would otherwise leave the verdict green with fewer checks.
-  for suite in '^PASS game/' '^PASS runlog/' '^PASS D3/'; do
+  for suite in '^PASS game/' '^PASS layout/' '^PASS runlog/' '^PASS D3/'; do
     if ! printf '%s\n' "$argv_out" | grep -q "$suite"; then
       echo "run-tests: $suite suite did not run" >&2
       exit 1

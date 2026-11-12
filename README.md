@@ -19,7 +19,13 @@ and streams their output into the window. Three modes:
 
 The install path defaults to `C:\SPT`. Automation, with no dialogs:
 
-    SPTCoopSetup.exe --mode <full|mods|update> --path <dir> [--auto] [--preview-ui <path.png>] [--test-game <ticks>]
+    SPTCoopSetup.exe --mode <full|mods|update> --path <dir> [--auto] [--preview-ui <path.png> [--preview-state <idle|running>]] [--test-game <ticks>]
+
+`--preview-ui` renders the window to that PNG and exits without installing;
+`--preview-state` picks the shape it captures. `idle` renders the single-column configuration
+layout with no game panel (the default shape, and what the app shows before an install starts),
+`running` renders the two-column layout with the game panel. Omitting the switch captures the
+running state.
 
 Prerequisites for a full install: Windows 10/11 x64, Escape From Tarkov installed through
 the BSG launcher, the .NET 10 Desktop and ASP.NET Core 10 runtimes, and about 85 GB free

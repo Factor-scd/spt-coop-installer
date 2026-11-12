@@ -79,6 +79,12 @@ var gameFailures = GameModelTests.Run();
 failures += gameFailures;
 checks += GameModelTests.Checks;
 
+// --- Layout geometry: the same widths the form and the headless preview path compute -------
+
+var layoutFailures = LayoutStateTests.Run();
+failures += layoutFailures;
+checks += LayoutStateTests.Checks;
+
 // --- D3: the --test-game switch and the verbatim Raw audit trail ----------------------------
 
 var testGameSpaced = Arguments.Parse(new[] { "--test-game", "600" });
@@ -104,6 +110,53 @@ Check(
     "D3/--test-game 0 is ignored",
     testGameZero.TestGameTicks is null && testGameZero.Ignored.Contains("--test-game 0"),
     "ticks " + (testGameZero.TestGameTicks?.ToString() ?? "null") + " ignored [" + string.Join("|", testGameZero.Ignored) + "]");
+
+// --- --preview-state: which window shape the headless preview renders ----------------------
+
+var previewIdle = Arguments.Parse(new[] { "--preview-state", "idle" });
+Check(
+    "layout/--preview-state idle sets the idle shape",
+    previewIdle.PreviewState == LayoutKind.Idle && previewIdle.Ignored.Count == 0,
+    "state " + (previewIdle.PreviewState?.ToString() ?? "null") + " ignored [" + string.Join("|", previewIdle.Ignored) + "]");
+
+var previewInline = Arguments.Parse(new[] { "--preview-state=running" });
+Check(
+    "layout/--preview-state=running sets the running shape",
+    previewInline.PreviewState == LayoutKind.Running,
+    "state " + (previewInline.PreviewState?.ToString() ?? "null"));
+
+// The switch is typed by hand in bug reports, so neither spelling nor case should matter.
+var previewMixedCase = Arguments.Parse(new[] { "--preview-state", "IDLE" });
+Check(
+    "layout/--preview-state is case-insensitive",
+    previewMixedCase.PreviewState == LayoutKind.Idle,
+    "state " + (previewMixedCase.PreviewState?.ToString() ?? "null"));
+
+var previewBare = Arguments.Parse(new[] { "--preview-state" });
+Check(
+    "layout/bare --preview-state is ignored",
+    previewBare.PreviewState is null && previewBare.Ignored.Contains("--preview-state"),
+    "state " + (previewBare.PreviewState?.ToString() ?? "null") + " ignored [" + string.Join("|", previewBare.Ignored) + "]");
+
+// A junk value must not silently pick a shape: the renderer keeps its own default instead.
+var previewBogus = Arguments.Parse(new[] { "--preview-state=bogus" });
+Check(
+    "layout/--preview-state with junk is ignored",
+    previewBogus.PreviewState is null && previewBogus.Ignored.Any(entry => entry.Contains("bogus", StringComparison.Ordinal)),
+    "state " + (previewBogus.PreviewState?.ToString() ?? "null") + " ignored [" + string.Join("|", previewBogus.Ignored) + "]");
+
+// Back-compat: every existing --preview-ui invocation has no --preview-state at all.
+var previewAbsent = Arguments.Parse(new[] { "--mode", "mods", "--preview-ui", "out.png" });
+Check(
+    "layout/absent --preview-state leaves the state null",
+    previewAbsent.PreviewState is null,
+    "state " + (previewAbsent.PreviewState?.ToString() ?? "null"));
+
+var previewBoth = Arguments.Parse(new[] { "--preview-state", "idle", "--preview-ui", "out.png" });
+Check(
+    "layout/--preview-state and --preview-ui parse together",
+    previewBoth.PreviewState == LayoutKind.Idle && previewBoth.PreviewPath == "out.png",
+    "state " + (previewBoth.PreviewState?.ToString() ?? "null") + " path " + (previewBoth.PreviewPath ?? "null"));
 
 // Raw is the audit trail: every non-empty entry, verbatim and in order, unknown flags included.
 var rawArgs = new[] { "--mode", "mods", "--weird-flag", "--path", @"C:\Program Files\SPT", "stray", "", "--auto" };

@@ -90,6 +90,9 @@ internal sealed class GameView : Control
     /// <summary>True when the game is paused because the window is inactive or minimised.</summary>
     public bool AutoPaused => _pausedByWindow;
 
+    /// <summary>True while the 16 ms simulation timer is running; false whenever the game is idle.</summary>
+    public bool IsLooping => _timer.Enabled;
+
     /// <summary>Called by the window on Activated/Deactivate: pauses while the window is inactive.</summary>
     public void SetWindowActive(bool active)
     {
