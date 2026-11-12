@@ -271,8 +271,16 @@ internal sealed class MainForm : Form, IMessageFilter
 
         Text = "SPT Co-op Setup";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(1180, 760);
-        MinimumSize = new Size(1100, 720);
+        // Never open larger than the desktop. On a 1024x768 host an 1180-wide window is physically
+        // clipped by the OS while WinForms still lays out for 1180, so right-aligned controls (the
+        // primary action button) end up outside the visible window and appear to be missing.
+        var wanted = new Size(1180, 760);
+        var usable = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, wanted.Width, wanted.Height);
+        var fitted = new Size(
+            Math.Min(wanted.Width, Math.Max(900, usable.Width - 16)),
+            Math.Min(wanted.Height, Math.Max(640, usable.Height - 16)));
+        ClientSize = fitted;
+        MinimumSize = new Size(Math.Min(1100, fitted.Width), Math.Min(720, fitted.Height));
         AutoScaleMode = AutoScaleMode.Font;
         KeyPreview = true;
 
@@ -915,15 +923,21 @@ internal sealed class MainForm : Form, IMessageFilter
         _cancelButton.Margin = new Padding(0, 0, 8, 0);
         _cancelButton.Click += OnCancelClicked;
 
+        // AutoSize + Dock.Fill sized this bar to its CONTENT. In the idle (full-width) layout the
+        // primary button was laid out past the bar's right edge and never painted, so the window
+        // showed only Cancel. A full-width, fixed-height bar keeps both buttons inside the column
+        // in both layouts.
         var bar = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            AutoSize = false,
+            Height = 34,
+            MinimumSize = new Size(0, 34),
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
             Margin = new Padding(0, 8, 0, 8),
-            BackColor = Color.Transparent,
+            BackColor = Theme.Surface,
+            Padding = new Padding(0),
         };
         bar.Controls.Add(_startButton);
         bar.Controls.Add(_cancelButton);

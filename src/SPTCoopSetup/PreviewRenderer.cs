@@ -36,6 +36,17 @@ internal static class PreviewRenderer
         form.StartPosition = FormStartPosition.Manual;
         form.Location = new Point(-32000, -32000);   // off-screen: no flash on the desktop
         form.ShowInTaskbar = false;
+
+        // The proof must be 1180x760 even on a small desktop. On this host the screen is 1024x768, so
+        // a decorated window was clamped to the working area (client 1028x753) and the capture padded
+        // the rest black - which silently hid the action bar's right-hand button. A borderless window
+        // is not clamped to the working area, so the requested client size sticks.
+        form.FormBorderStyle = FormBorderStyle.None;
+
+        // Must be set BEFORE Show: WinForms applies the font/Dpi autoscale factor while the handle is
+        // created, and overriding it afterwards leaves the window laid out at the scaled size.
+        form.AutoScaleMode = AutoScaleMode.None;
+
         form.Show();                                 // realises handles + child layout (no engine run: PreviewPath is set)
 
         // Settle the shape before the capture: animate:false skips the 350 ms reveal, so the PNG is
@@ -51,7 +62,14 @@ internal static class PreviewRenderer
         // proof size, so the constraint is dropped for the render only.
         form.MinimumSize = Size.Empty;
         form.MaximumSize = Size.Empty;
-        form.ClientSize = new Size(Width, Height);   // set AFTER Show so DPI autoscaling cannot override it
+
+        // Capture what the window can actually be: a desktop smaller than the design size clips the
+        // window physically, so asking for 1180 on a 1024-wide host produced a padded image with the
+        // right edge (the primary button) missing.
+        var usable = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, Width, Height);
+        form.ClientSize = new Size(
+            Math.Min(Width, usable.Width),
+            Math.Min(Height, usable.Height));
         form.PerformLayout();
         Application.DoEvents();
 
@@ -74,7 +92,8 @@ internal static class PreviewRenderer
 
         var lines = new List<string>
         {
-            $"preview {fullPath} {Width}x{Height}",
+            $"preview {fullPath} client={form.ClientSize.Width}x{form.ClientSize.Height}",
+            DumpButtons(form),
             LayoutState.AssertionLine(form.LayoutState, form.ConfigColumnWidth, form.GameColumnWidth),
         };
         lines.AddRange(checks.Select(Contrast.Describe));
@@ -99,4 +118,27 @@ internal static class PreviewRenderer
 
         return allPass ? 0 : 3;
     }
+
+    /// <summary>Diagnostic: where the action buttons actually ended up (preview output only).</summary>
+    private static string DumpButtons(Control root)
+    {
+        var sb = new System.Text.StringBuilder();
+        void Walk(Control c)
+        {
+            if (c is Button b)
+            {
+                var screen = b.Parent is null ? Point.Empty : b.Parent.PointToScreen(b.Location);
+                sb.Append($"\n  btn '{b.Text}' local={b.Bounds} screen={screen} visible={b.Visible} enabled={b.Enabled} parent={b.Parent?.GetType().Name}");
+            }
+
+            foreach (Control child in c.Controls)
+            {
+                Walk(child);
+            }
+        }
+
+        Walk(root);
+        return sb.ToString();
+    }
+
 }
