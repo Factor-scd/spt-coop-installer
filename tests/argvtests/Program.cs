@@ -73,6 +73,80 @@ File.WriteAllText(Path.Combine(tree, "SPT_Runtime", "SPT.Server.exe"), "stub");
 Check("D2/mods accepts an existing tree", TargetGuard.TryValidate(InstallMode.Mods, tree, out var okMessage), okMessage);
 Directory.Delete(tree, recursive: true);
 
+// --- Game physics: pure model, no WinForms/System.Drawing.Color involved -------------------
+
+var gameFailures = GameModelTests.Run();
+failures += gameFailures;
+checks += GameModelTests.Checks;
+
+// --- D3: the --test-game switch and the verbatim Raw audit trail ----------------------------
+
+var testGameSpaced = Arguments.Parse(new[] { "--test-game", "600" });
+Check("D3/--test-game <ticks> parses", testGameSpaced.TestGameTicks == 600, testGameSpaced.TestGameTicks?.ToString() ?? "null");
+
+var testGameInline = Arguments.Parse(new[] { "--test-game=600" });
+Check("D3/--test-game=<ticks> parses", testGameInline.TestGameTicks == 600, testGameInline.TestGameTicks?.ToString() ?? "null");
+
+var testGameJunk = Arguments.Parse(new[] { "--test-game", "abc" });
+Check(
+    "D3/--test-game with junk is ignored",
+    testGameJunk.TestGameTicks is null && testGameJunk.Ignored.Contains("--test-game abc"),
+    "ticks " + (testGameJunk.TestGameTicks?.ToString() ?? "null") + " ignored [" + string.Join("|", testGameJunk.Ignored) + "]");
+
+var testGameBare = Arguments.Parse(new[] { "--test-game" });
+Check(
+    "D3/bare --test-game is ignored",
+    testGameBare.TestGameTicks is null && testGameBare.Ignored.Contains("--test-game"),
+    "ticks " + (testGameBare.TestGameTicks?.ToString() ?? "null") + " ignored [" + string.Join("|", testGameBare.Ignored) + "]");
+
+var testGameZero = Arguments.Parse(new[] { "--test-game", "0" });
+Check(
+    "D3/--test-game 0 is ignored",
+    testGameZero.TestGameTicks is null && testGameZero.Ignored.Contains("--test-game 0"),
+    "ticks " + (testGameZero.TestGameTicks?.ToString() ?? "null") + " ignored [" + string.Join("|", testGameZero.Ignored) + "]");
+
+// Raw is the audit trail: every non-empty entry, verbatim and in order, unknown flags included.
+var rawArgs = new[] { "--mode", "mods", "--weird-flag", "--path", @"C:\Program Files\SPT", "stray", "", "--auto" };
+var rawParsed = Arguments.Parse(rawArgs);
+CheckEqual(
+    "D3/Raw keeps every entry verbatim in order",
+    @"--mode|mods|--weird-flag|--path|C:\Program Files\SPT|stray|--auto",
+    string.Join("|", rawParsed.Raw));
+
+// The headless runner itself: exit 0 proves all four assertions held (its two output lines
+// are printed above and are not PASS lines, so they cannot mask a suite that did not run).
+Check("game/--test-game 600 exits 0", GameTest.Run(600) == 0, "run returned non-zero");
+
+// --- Run log: flush-per-line, banner and rotation ------------------------------------------
+
+// RunLogTests prints its own PASS/FAIL lines and its own RUNLOG-<n>/<n> verdict but only returns
+// the failure count, so its output is captured here to fold the check count into the totals and
+// then replayed verbatim.
+var runLogBuffer = new StringWriter();
+var captureOut = Console.Out;
+Console.SetOut(runLogBuffer);
+int runLogFailures;
+try
+{
+    runLogFailures = RunLogTests.Run();
+}
+finally
+{
+    Console.SetOut(captureOut);
+}
+
+var runLogOut = runLogBuffer.ToString();
+Console.Out.Write(runLogOut);
+foreach (var line in runLogOut.Split('\n'))
+{
+    if (line.StartsWith("PASS ", StringComparison.Ordinal) || line.StartsWith("FAIL ", StringComparison.Ordinal))
+    {
+        checks++;
+    }
+}
+
+failures += runLogFailures;
+
 Console.WriteLine();
 Console.WriteLine(failures == 0 ? "ARGV-" + checks + "/" + checks : "ARGV-FAILED " + failures + "/" + checks);
 return failures == 0 ? 0 : 1;

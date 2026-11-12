@@ -97,6 +97,12 @@ internal static class Program
         var arguments = Arguments.Parse(argv);
         _auto = arguments.Auto;
 
+        // --test-game runs the game model headlessly: no window, no engine, no elevation, no network.
+        if (arguments.TestGameTicks is { } ticks)
+        {
+            return GameTest.Run(ticks);
+        }
+
         // --preview-ui renders the window and exits: no target validation, no elevation, no engine run.
         if (arguments.PreviewPath is { Length: > 0 } previewPath)
         {

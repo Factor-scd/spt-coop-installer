@@ -18,6 +18,10 @@
     <Compile Include="../../src/SPTCoopSetup/Arguments.cs" Link="Arguments.cs" />
     <Compile Include="../../src/SPTCoopSetup/ArgumentQuoting.cs" Link="ArgumentQuoting.cs" />
     <Compile Include="../../src/SPTCoopSetup/TargetGuard.cs" Link="TargetGuard.cs" />
+    <Compile Include="../../src/SPTCoopSetup/GameModel.cs" Link="GameModel.cs" />
+    <Compile Include="../../src/SPTCoopSetup/RunLog.cs" Link="RunLog.cs" />
+    <!-- GameTest is the headless test-game runner: pure BCL plus GameModel, so it compiles here too. -->
+    <Compile Include="../../src/SPTCoopSetup/GameTest.cs" Link="GameTest.cs" />
   </ItemGroup>
 
 </Project>

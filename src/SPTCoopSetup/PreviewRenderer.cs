@@ -8,8 +8,8 @@ namespace SPTCoopSetup;
 /// </summary>
 internal static class PreviewRenderer
 {
-    public const int Width = 1100;
-    public const int Height = 720;
+    public const int Width = 1180;
+    public const int Height = 760;
 
     /// <summary>
     /// Lays the real window out at <see cref="Width"/>x<see cref="Height"/>, renders it to
@@ -32,6 +32,11 @@ internal static class PreviewRenderer
         form.Location = new Point(-32000, -32000);   // off-screen: no flash on the desktop
         form.ShowInTaskbar = false;
         form.Show();                                 // realises handles + child layout (no engine run: PreviewPath is set)
+
+        // MinimumSize is DPI-scaled; on a 125%/150% host it would clamp the capture above the
+        // proof size, so the constraint is dropped for the render only.
+        form.MinimumSize = Size.Empty;
+        form.MaximumSize = Size.Empty;
         form.ClientSize = new Size(Width, Height);   // set AFTER Show so DPI autoscaling cannot override it
         form.PerformLayout();
         Application.DoEvents();

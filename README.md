@@ -19,7 +19,7 @@ and streams their output into the window. Three modes:
 
 The install path defaults to `C:\SPT`. Automation, with no dialogs:
 
-    SPTCoopSetup.exe --mode <full|mods|update> --path <dir> [--auto]
+    SPTCoopSetup.exe --mode <full|mods|update> --path <dir> [--auto] [--preview-ui <path.png>] [--test-game <ticks>]
 
 Prerequisites for a full install: Windows 10/11 x64, Escape From Tarkov installed through
 the BSG launcher, the .NET 10 Desktop and ASP.NET Core 10 runtimes, and about 85 GB free

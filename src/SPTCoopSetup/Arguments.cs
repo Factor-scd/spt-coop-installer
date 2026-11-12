@@ -12,7 +12,7 @@ internal enum InstallMode
 
 /// <summary>
 /// Command line for <c>SPTCoopSetup.exe</c>:
-/// <c>--mode &lt;full|mods|update&gt; --path &lt;dir&gt; [--auto] [--preview-ui &lt;path.png&gt;]</c>.
+/// <c>--mode &lt;full|mods|update&gt; --path &lt;dir&gt; [--auto] [--preview-ui &lt;path.png&gt;] [--test-game &lt;ticks&gt;]</c>.
 /// Both <c>--mode=value</c> and <c>--mode value</c> are accepted, unknown options are
 /// collected instead of rejected so a stale shortcut can never block a user.
 /// </summary>
@@ -20,8 +20,23 @@ internal sealed class Arguments
 {
     public const string DefaultTargetPath = @"C:\SPT";
 
-    private Arguments()
+    /// <summary>Upper bound for <c>--test-game</c>: a typo such as 20000000 must not hang the build.</summary>
+    private const int TestGameTickLimit = 200000;
+
+    private Arguments(string[] argv)
     {
+        // The audit trail for the run log's banner: every entry exactly as received, in order,
+        // before any parsing normalises a thing. Empty entries carry no information.
+        var raw = new List<string>(argv.Length);
+        foreach (var entry in argv)
+        {
+            if (!string.IsNullOrEmpty(entry))
+            {
+                raw.Add(entry);
+            }
+        }
+
+        Raw = raw;
     }
 
     /// <summary>Selected mode, or null when the user has to choose.</summary>
@@ -36,6 +51,12 @@ internal sealed class Arguments
     /// <summary>Set by <c>--preview-ui &lt;path&gt;</c>: render the window to that PNG and exit (no install run).</summary>
     public string? PreviewPath { get; private set; }
 
+    /// <summary>Set by <c>--test-game &lt;ticks&gt;</c>: run the game headlessly for that many 16 ms ticks and exit.</summary>
+    public int? TestGameTicks { get; private set; }
+
+    /// <summary>Every argv entry as received, verbatim and in order (for the run log's banner).</summary>
+    public IReadOnlyList<string> Raw { get; }
+
     /// <summary>Arguments we did not understand - logged once, then ignored.</summary>
     public List<string> Ignored { get; } = new();
 
@@ -44,7 +65,7 @@ internal sealed class Arguments
 
     public static Arguments Parse(string[] argv)
     {
-        var result = new Arguments();
+        var result = new Arguments(argv);
         for (var index = 0; index < argv.Length; index++)
         {
             var raw = argv[index] ?? string.Empty;
@@ -104,6 +125,27 @@ internal sealed class Arguments
                     else
                     {
                         result.PreviewPath = value.Trim().Trim('"');
+                    }
+
+                    break;
+                }
+
+                case "--test-game":
+                {
+                    var value = inlineValue ?? TakeValue(argv, ref index);
+                    if (value is null)
+                    {
+                        result.Ignored.Add(raw);
+                    }
+                    else if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks) &&
+                             ticks > 0 &&
+                             ticks <= TestGameTickLimit)
+                    {
+                        result.TestGameTicks = ticks;
+                    }
+                    else
+                    {
+                        result.Ignored.Add(raw + " " + value);
                     }
 
                     break;

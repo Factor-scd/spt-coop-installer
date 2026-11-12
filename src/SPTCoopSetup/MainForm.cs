@@ -8,13 +8,20 @@ using System.Windows.Forms;
 
 namespace SPTCoopSetup;
 
-/// <summary>The installer window: mode + folder, live progress, live log, and a final report.</summary>
+/// <summary>
+/// The installer window: two columns. The left column carries mode, folder, progress and the
+/// collapsible log drawer; the right column carries a playable game while the engine works.
+/// </summary>
 internal sealed class MainForm : Form
 {
     private const int LogLineCap = 5000;
     private const int LogTrimChunk = 1000;
     private const int QuietWindowSeconds = 45;
     private const int ReportTailLines = 40;
+
+    /// <summary>Left-column rows: 0 header, 1 mode, 2 target, 3 progress, 4 status, 5 actions.</summary>
+    private const int SpacerRow = 6;
+    private const int DrawerRow = 7;
 
     private const string QuietMarker = "(-- still working, engine quiet for 45s --)";
 
@@ -35,17 +42,33 @@ internal sealed class MainForm : Form
     /// <summary>Paints BgBase, the cover-scaled still and the scrim behind the whole window.</summary>
     private readonly ShaderBackdrop _backdrop = new();
 
+    /// <summary>The persistent per-run file; every line the pane shows is mirrored into it.</summary>
+    private readonly RunLog _runLog;
+
+    /// <summary>The playable game in the right column; never blocks the engine.</summary>
+    private readonly GameView _gameView;
+
     private readonly DarkRadioButton _modeFull = new() { Text = "Full install (game + SPT + mods)", AutoSize = true, Checked = true };
     private readonly DarkRadioButton _modeMods = new() { Text = "Mods only (existing SPT install)", AutoSize = true };
     private readonly DarkRadioButton _modeUpdate = new() { Text = "Update (game patch + mods)", AutoSize = true };
 
     private readonly TextBox _pathBox = new() { Text = Arguments.DefaultTargetPath };
     private readonly DarkButton _browseButton = new() { Text = "Browse..." };
+    private readonly Label _validationLabel = new() { AutoSize = false, Visible = false, Dock = DockStyle.Fill };
 
     private readonly Label _phaseLabel = new() { Text = "Ready.", AutoSize = true };
+    private readonly Label _percentLabel = new() { Text = "0 %", AutoSize = true };
     private readonly Label _elapsedLabel = new() { Text = "00:00", AutoSize = true };
     private readonly DarkProgressBar _progress = new() { Minimum = 0, Maximum = 100, Value = 0, Style = DarkProgressStyle.Blocks };
+    private readonly Label _statusLabel = new() { AutoSize = false };
+
+    private readonly Label _titleLabel = new() { AutoSize = true };
+    private readonly Label _subtitleLabel = new() { AutoSize = true };
+    private readonly Label _gameCaptionLabel = new() { AutoSize = false };
+
     private readonly RichTextBox _logBox = new();
+    private readonly DarkButton _logToggleButton = new();
+    private readonly DarkPanel _logDrawer = new();
 
     private readonly DarkPanel _reportGroup = new("Result");
     private readonly TextBox _reportBox = new();
@@ -54,6 +77,15 @@ internal sealed class MainForm : Form
 
     private readonly DarkButton _startButton = new() { Primary = true };
     private readonly DarkButton _cancelButton = new();
+
+    private TableLayoutPanel _root = null!;
+    private TableLayoutPanel _left = null!;
+    private TableLayoutPanel _drawerLayout = null!;
+    private Font? _titleFont;
+
+    private bool _drawerExpanded;
+    private bool _drawerApplied;
+    private bool _logBoxStale;
 
     private EngineRunner? _runner;
     private InstallMode _runningMode = InstallMode.Full;
@@ -69,6 +101,15 @@ internal sealed class MainForm : Form
     {
         _arguments = arguments;
 
+        var kind = _arguments.PreviewPath is not null ? "preview" : "install";
+        _runLog = RunLog.Create(_arguments.Raw.ToArray(), kind: kind);
+        _runLog.StartBanner(Application.ProductVersion, kind);
+
+        _gameView = new GameView(new GameModel(
+            _arguments.PreviewPath is not null ? GameModel.PreviewSeed : Environment.TickCount,
+            480,
+            600));
+
         BuildLayout();
         ApplyArguments();
 
@@ -82,6 +123,9 @@ internal sealed class MainForm : Form
         {
             AppendAppLine("ignoring unknown argument: " + ignored);
         }
+
+        // Deliberate breadcrumb: this is how a user finds the file after a failed install.
+        AppendAppLine("run log: " + (_runLog.Path ?? "unavailable"));
     }
 
     /// <summary>Process exit code: the engine's code once a run finished, 2 for a refused run.</summary>
@@ -121,6 +165,7 @@ internal sealed class MainForm : Form
     {
         // The cached cover-scaled still was sized for the old DPI: drop it and repaint.
         _backdrop.Invalidate();
+        UpdateLeftColumnWidth();
         Invalidate();
     }
 
@@ -132,9 +177,10 @@ internal sealed class MainForm : Form
 
         Text = "SPT Co-op Setup";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(920, 780);
-        MinimumSize = new Size(780, 640);
+        ClientSize = new Size(1180, 760);
+        MinimumSize = new Size(1100, 720);
         AutoScaleMode = AutoScaleMode.Font;
+        KeyPreview = true;
 
         SetStyle(
             ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw,
@@ -143,32 +189,167 @@ internal sealed class MainForm : Form
         BackColor = Theme.BgBase;
         ForeColor = Theme.TextPrimary;
 
-        var root = new TableLayoutPanel
+        _root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 6,
+            ColumnCount = 3,
+            RowCount = 1,
             Padding = new Padding(12),
             BackColor = Color.Transparent,
         };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // mode
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // folder
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // progress
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // log - takes the slack
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // result
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // actions
 
-        root.Controls.Add(BuildModeGroup(), 0, 0);
-        root.Controls.Add(BuildPathGroup(), 0, 1);
-        root.Controls.Add(BuildProgressGroup(), 0, 2);
-        root.Controls.Add(BuildLogGroup(), 0, 3);
-        root.Controls.Add(BuildReportGroup(), 0, 4);
-        root.Controls.Add(BuildActionBar(), 0, 5);
+        // [0] left column - Absolute, recomputed on every resize (see UpdateLeftColumnWidth).
+        // [1] the 1px divider, [2] the game gets everything that is left.
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 560f));
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1f));
+        _root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
 
-        Controls.Add(root);
+        _left = BuildLeftColumn();
+
+        _root.Controls.Add(_left, 0, 0);
+        _root.Controls.Add(BuildDivider(), 1, 0);
+        _root.Controls.Add(BuildGameColumn(), 2, 0);
+
+        Controls.Add(_root);
+        _root.SizeChanged += (_, _) => UpdateLeftColumnWidth();
+
         ResumeLayout(true);
+        UpdateLeftColumnWidth();
         PerformLayout();
+    }
+
+    /// <summary>
+    /// Clamps the left column between 520 and 640 logical pixels (DPI scaled) and never lets it
+    /// take more than 55% of the content width, so neither column can starve the other.
+    /// </summary>
+    private void UpdateLeftColumnWidth()
+    {
+        if (_root is null)
+        {
+            return;
+        }
+
+        var dpi = DeviceDpi > 0 ? DeviceDpi : 96;
+        var scale = dpi / 96f;
+        var contentWidth = Math.Max(1, _root.ClientSize.Width - _root.Padding.Horizontal);
+
+        var minimum = 520f * scale;
+        var maximum = 640f * scale;
+        var ideal = MathF.Round(contentWidth * 0.46f, MidpointRounding.AwayFromZero);
+        var width = MathF.Max(minimum, MathF.Min(ideal, maximum));
+
+        var cap = MathF.Max(minimum, contentWidth * 0.55f);
+        width = MathF.Min(width, cap);
+
+        var column = _root.ColumnStyles[0];
+        if (column.SizeType == SizeType.Absolute && Math.Abs(column.Width - width) < 0.5f)
+        {
+            return;
+        }
+
+        column.SizeType = SizeType.Absolute;
+        column.Width = width;
+    }
+
+    private static Control BuildDivider() => new Panel
+    {
+        Dock = DockStyle.Fill,
+        Margin = Padding.Empty,
+        BackColor = Theme.Border,
+    };
+
+    private TableLayoutPanel BuildLeftColumn()
+    {
+        var left = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 8,
+            Padding = Padding.Empty,
+            Margin = new Padding(0, 0, 12, 0),
+            BackColor = Color.Transparent,
+        };
+
+        left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 0 header block
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 1 install mode
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 2 target folder
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 3 progress
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 4 status line
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 5 actions
+        left.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));   // 6 spacer (slack, not a gap)
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 7 log drawer (collapsed)
+
+        left.Controls.Add(BuildHeader(), 0, 0);
+        left.Controls.Add(BuildModeGroup(), 0, 1);
+        left.Controls.Add(BuildPathGroup(), 0, 2);
+        left.Controls.Add(BuildProgressGroup(), 0, 3);
+        left.Controls.Add(BuildStatusLine(), 0, 4);
+        left.Controls.Add(BuildActionBar(), 0, 5);
+        left.Controls.Add(BuildSpacer(), 0, 6);
+        left.Controls.Add(BuildLogDrawer(), 0, 7);
+
+        return left;
+    }
+
+    private Control BuildHeader()
+    {
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0, 0, 0, 10),
+            BackColor = Color.Transparent,
+        };
+
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        header.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        header.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        _titleFont = new Font(Font.FontFamily, 15f, FontStyle.Bold);
+
+        _titleLabel.Text = "SPT CO-OP SETUP";
+        _titleLabel.Font = _titleFont;
+        _titleLabel.ForeColor = Theme.TextPrimary;
+        _titleLabel.BackColor = Color.Transparent;
+        _titleLabel.Anchor = AnchorStyles.Left;
+        _titleLabel.Margin = new Padding(0, 0, 0, 2);
+
+        _subtitleLabel.Text = "Installer for SPT + Fika co-op";
+        _subtitleLabel.ForeColor = Theme.TextSecondary;
+        _subtitleLabel.BackColor = Color.Transparent;
+        _subtitleLabel.Anchor = AnchorStyles.Left;
+        _subtitleLabel.Margin = new Padding(0);
+
+        // Wrap the subtitle to the column width instead of clipping it.
+        header.Layout += (_, _) => _subtitleLabel.MaximumSize = new Size(Math.Max(120, header.ClientSize.Width - 2), 0);
+
+        header.Controls.Add(_titleLabel, 0, 0);
+        header.Controls.Add(_subtitleLabel, 0, 1);
+        return header;
+    }
+
+    private Control BuildSpacer() => new Panel
+    {
+        Dock = DockStyle.Fill,
+        Margin = Padding.Empty,
+        BackColor = Color.Transparent,
+    };
+
+    private Control BuildStatusLine()
+    {
+        _statusLabel.Text = "Pick a mode and a folder - Start install validates the target first.";
+        _statusLabel.Dock = DockStyle.Fill;
+        _statusLabel.ForeColor = Theme.TextSecondary;
+        _statusLabel.BackColor = Color.Transparent;
+        _statusLabel.Margin = new Padding(0, 0, 0, 10);
+        _statusLabel.AutoEllipsis = true;
+
+        return _statusLabel;
     }
 
     private DarkPanel BuildModeGroup()
@@ -202,13 +383,27 @@ internal sealed class MainForm : Form
     {
         var group = NewDarkPanel("Target folder");
 
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Theme.Surface,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // folder row
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // validation slot (collapses when hidden)
+
         var row = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
             RowCount = 1,
+            Margin = Padding.Empty,
             BackColor = Theme.Surface,
         };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -232,7 +427,19 @@ internal sealed class MainForm : Form
         row.Controls.Add(pathField, 0, 0);
         row.Controls.Add(_browseButton, 1, 0);
 
-        group.Controls.Add(row);
+        // The pre-flight refusal slot: replaces the modal for empty/bad/TargetGuard paths.
+        _validationLabel.ForeColor = Theme.TextSecondary;
+        _validationLabel.BackColor = Theme.Surface;
+        _validationLabel.Visible = false;
+        _validationLabel.AutoEllipsis = true;
+        _validationLabel.Margin = new Padding(0, 4, 0, 0);
+
+        _pathBox.TextChanged += OnPathTextChanged;
+
+        layout.Controls.Add(row, 0, 0);
+        layout.Controls.Add(_validationLabel, 0, 1);
+
+        group.Controls.Add(layout);
         return group;
     }
 
@@ -242,17 +449,18 @@ internal sealed class MainForm : Form
 
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
-            RowCount = 2,
+            RowCount = 3,
             BackColor = Theme.Surface,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24f));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // phase + percentage
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22f)); // bar
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // elapsed
 
         _phaseLabel.Text = "Ready - pick a mode and a folder, then press Start install.";
         _phaseLabel.ForeColor = Theme.TextPrimary;
@@ -260,29 +468,55 @@ internal sealed class MainForm : Form
         _phaseLabel.Anchor = AnchorStyles.Left;
         _phaseLabel.Margin = new Padding(0, 0, 8, 6);
 
-        _elapsedLabel.ForeColor = Theme.TextPrimary;
-        _elapsedLabel.BackColor = Theme.Surface;
-        _elapsedLabel.Anchor = AnchorStyles.Right;
-        _elapsedLabel.Margin = new Padding(0, 0, 0, 6);
-        _elapsedLabel.Font = new Font(Font, FontStyle.Bold);
+        _percentLabel.ForeColor = Theme.TextPrimary;
+        _percentLabel.BackColor = Theme.Surface;
+        _percentLabel.Anchor = AnchorStyles.Right;
+        _percentLabel.Margin = new Padding(0, 0, 0, 6);
+        _percentLabel.Font = new Font(Font, FontStyle.Bold);
 
         _progress.Dock = DockStyle.Fill;
         _progress.Margin = new Padding(0);
 
+        _elapsedLabel.ForeColor = Theme.TextPrimary;
+        _elapsedLabel.BackColor = Theme.Surface;
+        _elapsedLabel.Anchor = AnchorStyles.Right;
+        _elapsedLabel.Margin = new Padding(0, 4, 0, 0);
+        _elapsedLabel.Font = new Font(Font, FontStyle.Bold);
+
         layout.Controls.Add(_phaseLabel, 0, 0);
-        layout.Controls.Add(_elapsedLabel, 1, 0);
+        layout.Controls.Add(_percentLabel, 1, 0);
         layout.SetColumnSpan(_progress, 2);
         layout.Controls.Add(_progress, 0, 1);
+        layout.SetColumnSpan(_elapsedLabel, 2);
+        layout.Controls.Add(_elapsedLabel, 0, 2);
 
         group.Controls.Add(layout);
+
+        UpdatePercentLabel();
         return group;
     }
 
-    private DarkPanel BuildLogGroup()
+    private Control BuildLogDrawer()
     {
-        var group = NewDarkPanel("Log");
-        group.AutoSize = false;
-        group.Dock = DockStyle.Fill;
+        _logDrawer.AutoSize = true;
+        _logDrawer.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _logDrawer.Dock = DockStyle.Fill;
+        _logDrawer.Margin = new Padding(0);
+
+        _drawerLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 3,
+            Margin = Padding.Empty,
+            BackColor = Theme.Surface,
+        };
+        _drawerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        _drawerLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30f)); // header
+        _drawerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // log box
+        _drawerLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // result pane
 
         _logBox.Dock = DockStyle.Fill;
         _logBox.ReadOnly = true;
@@ -294,9 +528,39 @@ internal sealed class MainForm : Form
         _logBox.ForeColor = Theme.TextPrimary;
         _logBox.BorderStyle = BorderStyle.None;
         _logBox.Font = Theme.MonoFont;
+        _logBox.Margin = new Padding(0);
+        _logBox.Visible = false; // collapsed by default
 
-        group.Controls.Add(_logBox);
-        return group;
+        _drawerLayout.Controls.Add(BuildDrawerHeader(), 0, 0);
+        _drawerLayout.Controls.Add(_logBox, 0, 1);
+        _drawerLayout.Controls.Add(BuildReportGroup(), 0, 2);
+
+        _logDrawer.Controls.Add(_drawerLayout);
+        return _logDrawer;
+    }
+
+    private Control BuildDrawerHeader()
+    {
+        _logToggleButton.Text = "▸ Show log";
+        _logToggleButton.AutoSize = false;
+        _logToggleButton.Size = new Size(150, 26);
+        _logToggleButton.Margin = new Padding(0);
+        _logToggleButton.Anchor = AnchorStyles.Left;
+        _logToggleButton.Click += OnLogToggleClicked;
+
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 1,
+            Margin = Padding.Empty,
+            BackColor = Theme.Surface,
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        header.Controls.Add(_logToggleButton, 0, 0);
+
+        return header;
     }
 
     private DarkPanel BuildReportGroup()
@@ -305,11 +569,11 @@ internal sealed class MainForm : Form
         _reportGroup.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         _reportGroup.Dock = DockStyle.Fill;
         _reportGroup.Visible = false;
-        _reportGroup.Margin = new Padding(0, 6, 0, 0);
+        _reportGroup.Margin = new Padding(0, 8, 0, 0);
 
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
@@ -317,7 +581,7 @@ internal sealed class MainForm : Form
             BackColor = Theme.Surface,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 130f));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _reportBox.Multiline = true;
@@ -382,7 +646,7 @@ internal sealed class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
-            Margin = new Padding(0, 8, 0, 0),
+            Margin = new Padding(0, 8, 0, 8),
             BackColor = Color.Transparent,
         };
         bar.Controls.Add(_startButton);
@@ -392,6 +656,46 @@ internal sealed class MainForm : Form
         return bar;
     }
 
+    private Control BuildGameColumn()
+    {
+        var column = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = Padding.Empty,
+            Margin = new Padding(12, 0, 0, 0),
+            BackColor = Color.Transparent,
+        };
+        column.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        column.RowStyles.Add(new RowStyle(SizeType.Absolute, 28f)); // caption
+        column.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // game
+
+        _gameCaptionLabel.Text = "TAKE A BREAK — arrows/A-D to move, SPACE to pause";
+        _gameCaptionLabel.Dock = DockStyle.Fill;
+        _gameCaptionLabel.ForeColor = Theme.TextSecondary;
+        _gameCaptionLabel.BackColor = Color.Transparent;
+        _gameCaptionLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _gameCaptionLabel.Margin = new Padding(0, 0, 0, 8);
+
+        // One rounded panel: the game canvas draws its own rounded frame inside this hairline.
+        var frame = new DarkPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Padding = new Padding(1),
+            Margin = Padding.Empty,
+        };
+
+        _gameView.Dock = DockStyle.Fill;
+        _gameView.Margin = Padding.Empty;
+        frame.Controls.Add(_gameView);
+
+        column.Controls.Add(_gameCaptionLabel, 0, 0);
+        column.Controls.Add(frame, 0, 1);
+        return column;
+    }
+
     private static DarkPanel NewDarkPanel(string title) => new(title)
     {
         AutoSize = true,
@@ -399,6 +703,96 @@ internal sealed class MainForm : Form
         Dock = DockStyle.Fill,
         Margin = new Padding(0, 0, 0, 10),
     };
+
+    // ---------------------------------------------------------------- log drawer
+
+    private void OnLogToggleClicked(object? sender, EventArgs e)
+    {
+        SetLogDrawerExpanded(!_drawerExpanded);
+    }
+
+    /// <summary>
+    /// Collapsed: the drawer is only its header and the spacer row above the buttons takes the
+    /// slack. Expanded: the drawer owns 35% of the column and the spacer drops to zero.
+    /// </summary>
+    private void SetLogDrawerExpanded(bool expanded)
+    {
+        if (_drawerApplied && _drawerExpanded == expanded)
+        {
+            return;
+        }
+
+        _drawerExpanded = expanded;
+        _drawerApplied = true;
+
+        SuspendLayout();
+        _logDrawer.SuspendLayout();
+        _drawerLayout.SuspendLayout();
+
+        try
+        {
+            if (expanded)
+            {
+                _logBox.Visible = true;
+                RefreshLogBox();
+
+                _drawerLayout.AutoSize = false;
+                _logDrawer.AutoSize = false;
+                _logDrawer.Dock = DockStyle.Fill;
+
+                SetLeftRow(SpacerRow, SizeType.Absolute, 0f);
+                SetLeftRow(DrawerRow, SizeType.Percent, 35f);
+            }
+            else
+            {
+                _logBox.Visible = false;
+
+                _drawerLayout.AutoSize = true;
+                _logDrawer.AutoSize = true;
+                _logDrawer.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+
+                SetLeftRow(DrawerRow, SizeType.AutoSize, 0f);
+                SetLeftRow(SpacerRow, SizeType.Percent, 100f);
+            }
+
+            _logToggleButton.Text = expanded ? "▾ Hide log" : "▸ Show log";
+        }
+        finally
+        {
+            _drawerLayout.ResumeLayout(true);
+            _logDrawer.ResumeLayout(true);
+            ResumeLayout(true);
+        }
+
+        PerformLayout();
+    }
+
+    private void SetLeftRow(int index, SizeType type, float height)
+    {
+        // The style collection has no mutable SizeType, so the row is replaced wholesale.
+        _left.RowStyles[index] = new RowStyle(type, height);
+    }
+
+    /// <summary>Replays everything the collapsed box missed; cheap because the pane is capped.</summary>
+    private void RefreshLogBox()
+    {
+        if (!_logBoxStale && _logBox.TextLength > 0)
+        {
+            return;
+        }
+
+        _logBox.Text = string.Join("\n", _visibleLines);
+        _logBoxStale = false;
+
+        if (_logBox.Focused)
+        {
+            _logBox.SelectionStart = _logBox.TextLength;
+            _logBox.SelectionLength = 0;
+            _logBox.ScrollToCaret();
+        }
+    }
+
+    // ---------------------------------------------------------------- arguments / state
 
     private void ApplyArguments()
     {
@@ -418,11 +812,100 @@ internal sealed class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+
+        if (_arguments.PreviewPath is not null)
+        {
+            // Deterministic mid-play frame; the preview must not animate.
+            _gameView.PrimeForPreview();
+            _gameView.StopLoop();
+        }
+        else
+        {
+            _gameView.StartLoop();
+        }
+
         if (_arguments.PreviewPath is null && _arguments.ShouldStartImmediately)
         {
             // Let the window paint first - the engine's first lines arrive fast.
             BeginInvoke(new Action(() => OnStartClicked(this, EventArgs.Empty)));
         }
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        _gameView.SetWindowActive(true);
+    }
+
+    protected override void OnDeactivate(EventArgs e)
+    {
+        base.OnDeactivate(e);
+        _gameView.SetWindowActive(false);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+
+        UpdateLeftColumnWidth();
+
+        // Minimising must pause the simulation, not keep it running off-screen.
+        _gameView.SetWindowActive(WindowState != FormWindowState.Minimized);
+    }
+
+    // ---------------------------------------------------------------- key routing
+
+    private const int WmKeyDown = 0x0100;
+    private const int WmKeyUp = 0x0101;
+    private const int WmSysKeyDown = 0x0104;
+    private const int WmSysKeyUp = 0x0105;
+
+    /// <summary>
+    /// Forwards arrow/A/D/SPACE presses and releases to the game, but only while no text-entry
+    /// control has focus. Runs before the dialog-key machinery, so the game wins over focus
+    /// navigation - except for Tab/Escape/Enter, which always keep their window meaning.
+    /// </summary>
+    protected override bool ProcessKeyMessage(ref Message m)
+    {
+        var isKeyMessage = m.Msg is WmKeyDown or WmKeyUp or WmSysKeyDown or WmSysKeyUp;
+
+        if (isKeyMessage && !IsTextEntryFocused())
+        {
+            var key = (Keys)((int)m.WParam & (int)Keys.KeyCode);
+            var down = m.Msg is WmKeyDown or WmSysKeyDown;
+
+            if (key is not (Keys.Tab or Keys.Escape or Keys.Enter) && _gameView.HandleKey(key, down))
+            {
+                return true;
+            }
+        }
+
+        return base.ProcessKeyMessage(ref m);
+    }
+
+    /// <summary>True while the folder box, the log pane or the report pane owns the keyboard.</summary>
+    private bool IsTextEntryFocused()
+    {
+        var active = ActiveControl;
+        for (var depth = 0; depth < 8 && active is ContainerControl container && container.ActiveControl is { } inner; depth++)
+        {
+            active = inner;
+        }
+
+        for (var control = active; control is not null; control = control.Parent)
+        {
+            if (control is TextBoxBase
+                || ReferenceEquals(control, _pathBox)
+                || ReferenceEquals(control, _logBox)
+                || ReferenceEquals(control, _reportBox))
+            {
+                // Only a live input eats the game's keys: a disabled one cannot hold focus, and a
+                // stale ActiveControl must not make the game unplayable while the engine runs.
+                return control.Enabled && control.Focused;
+            }
+        }
+
+        return false;
     }
 
     // ---------------------------------------------------------------- mode / folder
@@ -458,6 +941,15 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void OnPathTextChanged(object? sender, EventArgs e) => ShowValidationMessage(string.Empty);
+
+    private void ShowValidationMessage(string message)
+    {
+        var text = FirstLine(message);
+        _validationLabel.Text = text;
+        _validationLabel.Visible = text.Length > 0;
+    }
+
     // ---------------------------------------------------------------- run
 
     private void OnStartClicked(object? sender, EventArgs e)
@@ -485,7 +977,7 @@ internal sealed class MainForm : Form
         var typed = _pathBox.Text.Trim().Trim('"');
         if (typed.Length == 0)
         {
-            ReportFailure("Pick a target folder first.", blocking: true);
+            RefusePreFlight("Pick a target folder first.");
             return;
         }
 
@@ -496,17 +988,18 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
         {
-            ReportFailure("'" + typed + "' is not a valid folder path.", blocking: true);
+            RefusePreFlight("'" + typed + "' is not a valid folder path.");
             return;
         }
 
         if (!TargetGuard.TryValidate(mode, path, out var guardMessage))
         {
-            ReportFailure(guardMessage, blocking: true);
+            RefusePreFlight(guardMessage);
             return;
         }
 
         path = _pathBox.Text = path;
+        ShowValidationMessage(string.Empty);
 
         if (Elevation.NeedsAdmin(mode, path) && !Elevation.IsElevated())
         {
@@ -527,6 +1020,16 @@ internal sealed class MainForm : Form
         StartRun(mode, path);
     }
 
+    /// <summary>
+    /// A refusal before anything ran: the message lands in the slot under the folder box instead
+    /// of a modal, and still produces the FAILED log line plus exit code 2.
+    /// </summary>
+    private void RefusePreFlight(string message)
+    {
+        ShowValidationMessage(message);
+        ReportFailure(message, blocking: false);
+    }
+
     private void StartRun(InstallMode mode, string path)
     {
         _running = true;
@@ -545,9 +1048,12 @@ internal sealed class MainForm : Form
         _progress.MarqueeAnimationSpeed = 30;
         _progress.Value = 0;
         _phaseLabel.Text = Arguments.ModeTitle(mode) + " running...";
+        ShowValidationMessage(string.Empty);
+        UpdatePercentLabel();
 
         SetRunningState(true);
         AppendAppLine("starting " + Arguments.ModeTitle(mode).ToLowerInvariant() + " in " + path);
+        _runLog.Info("mode=" + Arguments.ModeTitle(mode) + " target=" + path);
 
         var runner = new EngineRunner(mode, path);
         runner.LineReceived += OnEngineLine;
@@ -567,6 +1073,7 @@ internal sealed class MainForm : Form
             SetRunningState(false);
             _progress.Style = DarkProgressStyle.Blocks;
             _phaseLabel.Text = "Failed.";
+            UpdatePercentLabel();
             ReportFailure("could not start the engine: " + ex.Message, blocking: true);
             return;
         }
@@ -600,6 +1107,26 @@ internal sealed class MainForm : Form
         _browseButton.Enabled = !running;
     }
 
+    // ---------------------------------------------------------------- progress
+
+    /// <summary>"42 %" while determinate, an em dash while the bar is still marquee.</summary>
+    private void UpdatePercentLabel()
+    {
+        if (_progress.Style == DarkProgressStyle.Marquee)
+        {
+            _percentLabel.Text = "—";
+            return;
+        }
+
+        var span = _progress.Maximum - _progress.Minimum;
+        var percent = span <= 0
+            ? 0
+            : (int)Math.Round(100d * (_progress.Value - _progress.Minimum) / span, MidpointRounding.AwayFromZero);
+
+        percent = Math.Clamp(percent, 0, 100);
+        _percentLabel.Text = percent.ToString(CultureInfo.InvariantCulture) + " %";
+    }
+
     // ---------------------------------------------------------------- engine callbacks
 
     private void OnEngineLine(string line)
@@ -625,7 +1152,7 @@ internal sealed class MainForm : Form
 
         _lastOutputUtc = DateTime.UtcNow;
         _quietNoted = false;
-        AppendLine(line);
+        AppendLine(line, "ENGINE");
 
         var match = ModProgressPattern.Match(line);
         if (!match.Success
@@ -655,6 +1182,7 @@ internal sealed class MainForm : Form
 
         _progress.Value = Math.Clamp(done, _progress.Minimum, _progress.Maximum);
         _phaseLabel.Text = "Installing mods: " + done.ToString(CultureInfo.InvariantCulture) + "/" + total.ToString(CultureInfo.InvariantCulture);
+        UpdatePercentLabel();
     }
 
     private void OnEngineFinished(int exitCode)
@@ -699,7 +1227,14 @@ internal sealed class MainForm : Form
             _progress.Value = _cancelRequested || exitCode != 0 ? _progress.Minimum : _progress.Maximum;
         }
 
+        UpdatePercentLabel();
+
         _phaseLabel.Text = _cancelRequested ? "Cancelled." : exitCode == 0 ? "Finished." : "Failed.";
+
+        _runLog.Info(
+            "engine exit code " + exitCode.ToString(CultureInfo.InvariantCulture)
+            + " elapsed " + FormatElapsed(elapsed)
+            + " cancelled " + (_cancelRequested ? "true" : "false"));
 
         ShowReport(_runningMode, _runningPath, exitCode, elapsed);
         ExitCode = exitCode;
@@ -732,7 +1267,7 @@ internal sealed class MainForm : Form
 
         // A 20 minute robocopy prints nothing: say something so it does not look hung.
         _quietNoted = true;
-        AppendLine(QuietMarker);
+        AppendLine(QuietMarker, "APP");
     }
 
     // ---------------------------------------------------------------- report
@@ -770,6 +1305,9 @@ internal sealed class MainForm : Form
 
         _openFolderButton.Enabled = folderExists;
         _reportGroup.Visible = true;
+
+        // The result lives in the drawer, so a finished run opens it.
+        SetLogDrawerExpanded(true);
     }
 
     private void ReportFailure(string message, bool blocking)
@@ -858,10 +1396,26 @@ internal sealed class MainForm : Form
 
     // ---------------------------------------------------------------- log plumbing
 
-    private void AppendAppLine(string text) => AppendLine("[app] " + text);
+    private void AppendAppLine(string text) => AppendLine("[app] " + text, "APP");
 
-    private void AppendLine(string text)
+    /// <summary>
+    /// Adds one line to the pane and to the run log with the same text. Never touches focus: the
+    /// caret only moves while the pane is already visible and focused by the user.
+    /// </summary>
+    private void AppendLine(string text, string level)
     {
+        // EngineRunner labels its own bookkeeping lines "[app] ...": those stay APP in the file.
+        var effective = text.StartsWith("[app] ", StringComparison.Ordinal) ? "APP" : level;
+
+        if (string.Equals(effective, "ENGINE", StringComparison.Ordinal))
+        {
+            _runLog.Engine(text);
+        }
+        else
+        {
+            _runLog.Line(effective, text);
+        }
+
         _logLines.Add(text);
         _visibleLines.Add(text);
 
@@ -870,6 +1424,13 @@ internal sealed class MainForm : Form
         {
             _visibleLines.RemoveRange(0, Math.Min(LogTrimChunk, _visibleLines.Count));
             trimmed = true;
+        }
+
+        // Collapsed drawer: the pane is stale until the user opens it (keeps the callback cheap).
+        if (!_logBox.Visible)
+        {
+            _logBoxStale = true;
+            return;
         }
 
         if (trimmed)
@@ -881,9 +1442,12 @@ internal sealed class MainForm : Form
             _logBox.AppendText(text + "\n");
         }
 
-        _logBox.SelectionStart = _logBox.TextLength;
-        _logBox.SelectionLength = 0;
-        _logBox.ScrollToCaret();
+        if (_logBox.Focused)
+        {
+            _logBox.SelectionStart = _logBox.TextLength;
+            _logBox.SelectionLength = 0;
+            _logBox.ScrollToCaret();
+        }
     }
 
     private static string FormatElapsed(TimeSpan elapsed)
@@ -934,6 +1498,8 @@ internal sealed class MainForm : Form
         _clock.Dispose();
         _runner?.Dispose();
         _runner = null;
+        _runLog.Info("window closed exit code " + ExitCode.ToString(CultureInfo.InvariantCulture));
+        _runLog.Dispose();
         _backdrop.Dispose();
     }
 
@@ -945,6 +1511,12 @@ internal sealed class MainForm : Form
             _runner?.Dispose();
             _runner = null;
             _backdrop.Dispose();
+
+            _titleFont?.Dispose();
+            _titleFont = null;
+
+            // Idempotent: whichever of OnFormClosed/Dispose runs second is a no-op.
+            _runLog.Dispose();
         }
 
         base.Dispose(disposing);

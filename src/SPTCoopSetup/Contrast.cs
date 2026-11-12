@@ -57,6 +57,11 @@ internal static class Contrast
             Check("accent-text-on-fill", Theme.AccentText, Theme.AccentFill),
             Check("primary-on-scrim", Theme.TextPrimary, scrimWorstCase),
             Check("secondary-on-scrim", Theme.TextSecondary, scrimWorstCase),
+
+            // The game canvas: score, hints and the player glyph are drawn straight onto Track.
+            Check("primary-on-track", Theme.TextPrimary, Theme.Track),
+            Check("secondary-on-track", Theme.TextSecondary, Theme.Track),
+            Check("accent-on-track", Theme.AccentFill, Theme.Track),
         };
     }
 

@@ -68,6 +68,14 @@ if command -v dotnet >/dev/null 2>&1; then
     echo "run-tests: argument tests FAILED" >&2
     exit 1
   fi
+  # Every host-side suite must have actually run: a suite that silently stopped being invoked
+  # would otherwise leave the verdict green with fewer checks.
+  for suite in '^PASS game/' '^PASS runlog/' '^PASS D3/'; do
+    if ! printf '%s\n' "$argv_out" | grep -q "$suite"; then
+      echo "run-tests: $suite suite did not run" >&2
+      exit 1
+    fi
+  done
 else
   echo "run-tests: dotnet not found - argument tests SKIPPED (this is not a pass)" >&2
   exit 1

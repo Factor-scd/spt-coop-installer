@@ -626,12 +626,17 @@ internal sealed class DarkProgressBar : Control
     }
 }
 
-/// <summary>A flat radio button with a hand-drawn ring glyph; keeps the base measurement for AutoSize.</summary>
+/// <summary>
+/// A flat radio button with a hand-drawn ring glyph. The label starts at <see cref="TextOffset"/>
+/// instead of the base control's glyph column, so AutoSize is measured here rather than inherited -
+/// the base measurement is what used to clip the last characters of a long label.
+/// </summary>
 internal sealed class DarkRadioButton : RadioButton
 {
     private const int GlyphSize = 16;
     private const int DotSize = 8;
     private const int TextOffset = 19;
+    private const int LabelRightPad = 4;
 
     public DarkRadioButton()
     {
@@ -642,6 +647,24 @@ internal sealed class DarkRadioButton : RadioButton
         DoubleBuffered = true;
         BackColor = Theme.Surface;
         ForeColor = Theme.TextPrimary;
+    }
+
+    /// <summary>
+    /// Measures the label with the font actually used for painting, offset by the glyph column and
+    /// rounded up so an ellipsis never replaces the tail of the text.
+    /// </summary>
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        var text = TextRenderer.MeasureText(
+            Text ?? string.Empty,
+            Font,
+            Size.Empty,
+            TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+
+        var width = TextOffset + text.Width + Padding.Right + LabelRightPad;
+        var height = Math.Max(GlyphSize + 6, text.Height);
+
+        return new Size(width, height);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -657,6 +680,18 @@ internal sealed class DarkRadioButton : RadioButton
 
         PaintGlyph(e.Graphics, bounds);
         PaintLabel(e.Graphics, bounds);
+    }
+
+    protected override void OnFontChanged(EventArgs e)
+    {
+        base.OnFontChanged(e);
+        Invalidate();
+    }
+
+    protected override void OnTextChanged(EventArgs e)
+    {
+        base.OnTextChanged(e);
+        Invalidate();
     }
 
     protected override void OnCheckedChanged(EventArgs e)
