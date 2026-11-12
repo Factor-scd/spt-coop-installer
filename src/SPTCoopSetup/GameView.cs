@@ -52,7 +52,10 @@ internal sealed class GameView : Control
             | ControlStyles.OptimizedDoubleBuffer
             | ControlStyles.ResizeRedraw,
             true);
-        SetStyle(ControlStyles.Selectable, false);
+        // Clickable + focusable so clicking the panel takes focus away from the folder box;
+        // otherwise arrows keep typing into the text field instead of moving the player.
+        SetStyle(ControlStyles.Selectable, true);
+        TabStop = false;
 
         BackColor = Theme.Track;
         ForeColor = Theme.TextPrimary;
@@ -70,6 +73,16 @@ internal sealed class GameView : Control
 
         _model.Resize(Math.Max(1, Width - 2), Math.Max(1, Height - 2));
         _ready = true;
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        if (CanFocus)
+        {
+            Focus();
+        }
     }
 
     public GameModel Model => _model;

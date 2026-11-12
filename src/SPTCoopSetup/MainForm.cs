@@ -12,7 +12,7 @@ namespace SPTCoopSetup;
 /// The installer window: two columns. The left column carries mode, folder, progress and the
 /// collapsible log drawer; the right column carries a playable game while the engine works.
 /// </summary>
-internal sealed class MainForm : Form
+internal sealed class MainForm : Form, IMessageFilter
 {
     private const int LogLineCap = 5000;
     private const int LogTrimChunk = 1000;
@@ -181,6 +181,10 @@ internal sealed class MainForm : Form
         MinimumSize = new Size(1100, 720);
         AutoScaleMode = AutoScaleMode.Font;
         KeyPreview = true;
+
+        // ProcessKeyMessage only fires while the FORM holds the message; with any child control
+        // focused the game starved. A message filter sees every key before dispatch, whatever has focus.
+        Application.AddMessageFilter(this);
 
         SetStyle(
             ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw,
@@ -865,22 +869,19 @@ internal sealed class MainForm : Form
     /// control has focus. Runs before the dialog-key machinery, so the game wins over focus
     /// navigation - except for Tab/Escape/Enter, which always keep their window meaning.
     /// </summary>
-    protected override bool ProcessKeyMessage(ref Message m)
+    public bool PreFilterMessage(ref Message m)
     {
         var isKeyMessage = m.Msg is WmKeyDown or WmKeyUp or WmSysKeyDown or WmSysKeyUp;
 
-        if (isKeyMessage && !IsTextEntryFocused())
+        if (!isKeyMessage || !_gameView.Visible || IsTextEntryFocused())
         {
-            var key = (Keys)((int)m.WParam & (int)Keys.KeyCode);
-            var down = m.Msg is WmKeyDown or WmSysKeyDown;
-
-            if (key is not (Keys.Tab or Keys.Escape or Keys.Enter) && _gameView.HandleKey(key, down))
-            {
-                return true;
-            }
+            return false;
         }
 
-        return base.ProcessKeyMessage(ref m);
+        var key = (Keys)((int)m.WParam & (int)Keys.KeyCode);
+        var down = m.Msg is WmKeyDown or WmSysKeyDown;
+
+        return key is not (Keys.Tab or Keys.Escape or Keys.Enter) && _gameView.HandleKey(key, down);
     }
 
     /// <summary>True while the folder box, the log pane or the report pane owns the keyboard.</summary>
@@ -1507,6 +1508,7 @@ internal sealed class MainForm : Form
     {
         if (disposing)
         {
+            Application.RemoveMessageFilter(this);
             _clock.Dispose();
             _runner?.Dispose();
             _runner = null;
