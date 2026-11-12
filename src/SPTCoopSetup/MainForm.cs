@@ -32,25 +32,28 @@ internal sealed class MainForm : Form
     /// <summary>The subset still in the RichTextBox once the line cap starts trimming.</summary>
     private readonly List<string> _visibleLines = new();
 
-    private readonly RadioButton _modeFull = new() { Text = "Full install (game + SPT + mods)", AutoSize = true, Checked = true };
-    private readonly RadioButton _modeMods = new() { Text = "Mods only (existing SPT install)", AutoSize = true };
-    private readonly RadioButton _modeUpdate = new() { Text = "Update (game patch + mods)", AutoSize = true };
+    /// <summary>Paints BgBase, the cover-scaled still and the scrim behind the whole window.</summary>
+    private readonly ShaderBackdrop _backdrop = new();
+
+    private readonly DarkRadioButton _modeFull = new() { Text = "Full install (game + SPT + mods)", AutoSize = true, Checked = true };
+    private readonly DarkRadioButton _modeMods = new() { Text = "Mods only (existing SPT install)", AutoSize = true };
+    private readonly DarkRadioButton _modeUpdate = new() { Text = "Update (game patch + mods)", AutoSize = true };
 
     private readonly TextBox _pathBox = new() { Text = Arguments.DefaultTargetPath };
-    private readonly Button _browseButton = new() { Text = "Browse..." };
+    private readonly DarkButton _browseButton = new() { Text = "Browse..." };
 
     private readonly Label _phaseLabel = new() { Text = "Ready.", AutoSize = true };
     private readonly Label _elapsedLabel = new() { Text = "00:00", AutoSize = true };
-    private readonly ProgressBar _progress = new() { Minimum = 0, Maximum = 100, Value = 0, Style = ProgressBarStyle.Blocks };
+    private readonly DarkProgressBar _progress = new() { Minimum = 0, Maximum = 100, Value = 0, Style = DarkProgressStyle.Blocks };
     private readonly RichTextBox _logBox = new();
 
-    private readonly GroupBox _reportGroup = new();
+    private readonly DarkPanel _reportGroup = new("Result");
     private readonly TextBox _reportBox = new();
-    private readonly Button _openFolderButton = new();
-    private readonly Button _copyLogButton = new();
+    private readonly DarkButton _openFolderButton = new();
+    private readonly DarkButton _copyLogButton = new();
 
-    private readonly Button _startButton = new();
-    private readonly Button _cancelButton = new();
+    private readonly DarkButton _startButton = new() { Primary = true };
+    private readonly DarkButton _cancelButton = new();
 
     private EngineRunner? _runner;
     private InstallMode _runningMode = InstallMode.Full;
@@ -72,6 +75,7 @@ internal sealed class MainForm : Form
         _clock.Tick += OnClockTick;
         FormClosing += OnFormClosing;
         FormClosed += OnFormClosed;
+        DpiChanged += OnDpiChanged;
 
         AppendAppLine("SPT Co-op Setup " + Application.ProductVersion);
         foreach (var ignored in _arguments.Ignored)
@@ -82,6 +86,43 @@ internal sealed class MainForm : Form
 
     /// <summary>Process exit code: the engine's code once a run finished, 2 for a refused run.</summary>
     public int ExitCode { get; private set; }
+
+    // ---------------------------------------------------------------- window surface
+
+    private const int DwmUseImmersiveDarkMode = 20;
+    private const int DwmUseImmersiveDarkModePre20H1 = 19;
+
+    /// <summary>Paints the still plus scrim; never call the base, it would cover the image with BackColor.</summary>
+    protected override void OnPaintBackground(PaintEventArgs e) => _backdrop.Paint(e.Graphics, ClientSize);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+
+        var on = 1;
+        try
+        {
+            if (DwmSetWindowAttribute(Handle, DwmUseImmersiveDarkMode, ref on, sizeof(int)) != 0)
+            {
+                // Windows 10 1809-1903 answered to attribute 19; anything older just ignores both.
+                DwmSetWindowAttribute(Handle, DwmUseImmersiveDarkModePre20H1, ref on, sizeof(int));
+            }
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // No DWM (or none of the attribute) here: keep the OS title bar rather than fail.
+        }
+    }
+
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    private void OnDpiChanged(object? sender, DpiChangedEventArgs e)
+    {
+        // The cached cover-scaled still was sized for the old DPI: drop it and repaint.
+        _backdrop.Invalidate();
+        Invalidate();
+    }
 
     // ---------------------------------------------------------------- layout
 
@@ -95,12 +136,20 @@ internal sealed class MainForm : Form
         MinimumSize = new Size(780, 640);
         AutoScaleMode = AutoScaleMode.Font;
 
+        SetStyle(
+            ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw,
+            true);
+        DoubleBuffered = true;
+        BackColor = Theme.BgBase;
+        ForeColor = Theme.TextPrimary;
+
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 6,
             Padding = new Padding(12),
+            BackColor = Color.Transparent,
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // mode
@@ -122,9 +171,9 @@ internal sealed class MainForm : Form
         PerformLayout();
     }
 
-    private GroupBox BuildModeGroup()
+    private DarkPanel BuildModeGroup()
     {
-        var group = NewGroupBox("Install mode");
+        var group = NewDarkPanel("Install mode");
 
         var stack = new TableLayoutPanel
         {
@@ -133,6 +182,7 @@ internal sealed class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
             RowCount = 3,
+            BackColor = Theme.Surface,
         };
         stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         for (var row = 0; row < 3; row++)
@@ -148,9 +198,9 @@ internal sealed class MainForm : Form
         return group;
     }
 
-    private GroupBox BuildPathGroup()
+    private DarkPanel BuildPathGroup()
     {
-        var group = NewGroupBox("Target folder");
+        var group = NewDarkPanel("Target folder");
 
         var row = new TableLayoutPanel
         {
@@ -159,13 +209,18 @@ internal sealed class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
             RowCount = 1,
+            BackColor = Theme.Surface,
         };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         row.RowStyles.Add(new RowStyle(SizeType.Absolute, 29f));
 
-        _pathBox.Dock = DockStyle.Fill;
-        _pathBox.Margin = new Padding(0, 0, 8, 0);
+        // DarkField owns the cell and docks _pathBox inside itself over the raised fill.
+        var pathField = new DarkField(_pathBox)
+        {
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 8, 0),
+        };
 
         _browseButton.AutoSize = true;
         _browseButton.AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -174,16 +229,16 @@ internal sealed class MainForm : Form
         _browseButton.Anchor = AnchorStyles.Right;
         _browseButton.Click += OnBrowseClicked;
 
-        row.Controls.Add(_pathBox, 0, 0);
+        row.Controls.Add(pathField, 0, 0);
         row.Controls.Add(_browseButton, 1, 0);
 
         group.Controls.Add(row);
         return group;
     }
 
-    private GroupBox BuildProgressGroup()
+    private DarkPanel BuildProgressGroup()
     {
-        var group = NewGroupBox("Progress");
+        var group = NewDarkPanel("Progress");
 
         var layout = new TableLayoutPanel
         {
@@ -192,6 +247,7 @@ internal sealed class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
             RowCount = 2,
+            BackColor = Theme.Surface,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -199,9 +255,13 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24f));
 
         _phaseLabel.Text = "Ready - pick a mode and a folder, then press Start install.";
+        _phaseLabel.ForeColor = Theme.TextPrimary;
+        _phaseLabel.BackColor = Theme.Surface;
         _phaseLabel.Anchor = AnchorStyles.Left;
         _phaseLabel.Margin = new Padding(0, 0, 8, 6);
 
+        _elapsedLabel.ForeColor = Theme.TextPrimary;
+        _elapsedLabel.BackColor = Theme.Surface;
         _elapsedLabel.Anchor = AnchorStyles.Right;
         _elapsedLabel.Margin = new Padding(0, 0, 0, 6);
         _elapsedLabel.Font = new Font(Font, FontStyle.Bold);
@@ -218,9 +278,9 @@ internal sealed class MainForm : Form
         return group;
     }
 
-    private GroupBox BuildLogGroup()
+    private DarkPanel BuildLogGroup()
     {
-        var group = NewGroupBox("Log");
+        var group = NewDarkPanel("Log");
         group.AutoSize = false;
         group.Dock = DockStyle.Fill;
 
@@ -230,20 +290,20 @@ internal sealed class MainForm : Form
         _logBox.DetectUrls = false;
         _logBox.HideSelection = false;
         _logBox.ScrollBars = RichTextBoxScrollBars.Both;
-        _logBox.BackColor = SystemColors.Window;
-        _logBox.Font = new Font("Consolas", 9f);
+        _logBox.BackColor = Theme.Surface;
+        _logBox.ForeColor = Theme.TextPrimary;
+        _logBox.BorderStyle = BorderStyle.None;
+        _logBox.Font = Theme.MonoFont;
 
         group.Controls.Add(_logBox);
         return group;
     }
 
-    private GroupBox BuildReportGroup()
+    private DarkPanel BuildReportGroup()
     {
-        _reportGroup.Text = "Result";
         _reportGroup.AutoSize = true;
         _reportGroup.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         _reportGroup.Dock = DockStyle.Fill;
-        _reportGroup.Padding = new Padding(10, 6, 10, 10);
         _reportGroup.Visible = false;
         _reportGroup.Margin = new Padding(0, 6, 0, 0);
 
@@ -254,6 +314,7 @@ internal sealed class MainForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
             RowCount = 2,
+            BackColor = Theme.Surface,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 160f));
@@ -264,8 +325,10 @@ internal sealed class MainForm : Form
         _reportBox.WordWrap = false;
         _reportBox.ScrollBars = ScrollBars.Both;
         _reportBox.Dock = DockStyle.Fill;
-        _reportBox.BackColor = SystemColors.Window;
-        _reportBox.Font = new Font("Consolas", 9f);
+        _reportBox.BackColor = Theme.Surface;
+        _reportBox.ForeColor = Theme.TextPrimary;
+        _reportBox.BorderStyle = BorderStyle.None;
+        _reportBox.Font = Theme.MonoFont;
         _reportBox.Margin = new Padding(0);
 
         _openFolderButton.Text = "Open install folder";
@@ -285,6 +348,7 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Margin = new Padding(0, 6, 0, 0),
+            BackColor = Theme.Surface,
         };
         buttons.Controls.Add(_openFolderButton);
         buttons.Controls.Add(_copyLogButton);
@@ -319,6 +383,7 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
             Margin = new Padding(0, 8, 0, 0),
+            BackColor = Color.Transparent,
         };
         bar.Controls.Add(_startButton);
         bar.Controls.Add(_cancelButton);
@@ -327,14 +392,12 @@ internal sealed class MainForm : Form
         return bar;
     }
 
-    private static GroupBox NewGroupBox(string title) => new()
+    private static DarkPanel NewDarkPanel(string title) => new(title)
     {
-        Text = title,
         AutoSize = true,
         AutoSizeMode = AutoSizeMode.GrowAndShrink,
         Dock = DockStyle.Fill,
-        Padding = new Padding(10, 6, 10, 10),
-        Margin = new Padding(0, 0, 0, 6),
+        Margin = new Padding(0, 0, 0, 10),
     };
 
     private void ApplyArguments()
@@ -355,7 +418,7 @@ internal sealed class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        if (_arguments.ShouldStartImmediately)
+        if (_arguments.PreviewPath is null && _arguments.ShouldStartImmediately)
         {
             // Let the window paint first - the engine's first lines arrive fast.
             BeginInvoke(new Action(() => OnStartClicked(this, EventArgs.Empty)));
@@ -478,7 +541,7 @@ internal sealed class MainForm : Form
         _reportGroup.Visible = false;
         _reportBox.Clear();
         _elapsedLabel.Text = "00:00";
-        _progress.Style = ProgressBarStyle.Marquee;
+        _progress.Style = DarkProgressStyle.Marquee;
         _progress.MarqueeAnimationSpeed = 30;
         _progress.Value = 0;
         _phaseLabel.Text = Arguments.ModeTitle(mode) + " running...";
@@ -502,7 +565,7 @@ internal sealed class MainForm : Form
             _runner = null;
             runner.Dispose();
             SetRunningState(false);
-            _progress.Style = ProgressBarStyle.Blocks;
+            _progress.Style = DarkProgressStyle.Blocks;
             _phaseLabel.Text = "Failed.";
             ReportFailure("could not start the engine: " + ex.Message, blocking: true);
             return;
@@ -577,7 +640,7 @@ internal sealed class MainForm : Form
         if (!_progressDeterminate)
         {
             _progressDeterminate = true;
-            _progress.Style = ProgressBarStyle.Continuous;
+            _progress.Style = DarkProgressStyle.Continuous;
             _progress.Maximum = total;
         }
         else if (_progress.Maximum != total)
@@ -630,7 +693,7 @@ internal sealed class MainForm : Form
         }
 
         SetRunningState(false);
-        _progress.Style = ProgressBarStyle.Blocks;
+        _progress.Style = DarkProgressStyle.Blocks;
         if (_progressDeterminate)
         {
             _progress.Value = _cancelRequested || exitCode != 0 ? _progress.Minimum : _progress.Maximum;
@@ -871,6 +934,7 @@ internal sealed class MainForm : Form
         _clock.Dispose();
         _runner?.Dispose();
         _runner = null;
+        _backdrop.Dispose();
     }
 
     protected override void Dispose(bool disposing)
@@ -880,6 +944,7 @@ internal sealed class MainForm : Form
             _clock.Dispose();
             _runner?.Dispose();
             _runner = null;
+            _backdrop.Dispose();
         }
 
         base.Dispose(disposing);

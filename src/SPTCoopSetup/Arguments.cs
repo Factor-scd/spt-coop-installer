@@ -12,7 +12,7 @@ internal enum InstallMode
 
 /// <summary>
 /// Command line for <c>SPTCoopSetup.exe</c>:
-/// <c>--mode &lt;full|mods|update&gt; --path &lt;dir&gt; [--auto]</c>.
+/// <c>--mode &lt;full|mods|update&gt; --path &lt;dir&gt; [--auto] [--preview-ui &lt;path.png&gt;]</c>.
 /// Both <c>--mode=value</c> and <c>--mode value</c> are accepted, unknown options are
 /// collected instead of rejected so a stale shortcut can never block a user.
 /// </summary>
@@ -32,6 +32,9 @@ internal sealed class Arguments
 
     /// <summary>Set by <c>--auto</c>: never show a modal dialog (for unattended runs).</summary>
     public bool Auto { get; private set; }
+
+    /// <summary>Set by <c>--preview-ui &lt;path&gt;</c>: render the window to that PNG and exit (no install run).</summary>
+    public string? PreviewPath { get; private set; }
 
     /// <summary>Arguments we did not understand - logged once, then ignored.</summary>
     public List<string> Ignored { get; } = new();
@@ -90,6 +93,21 @@ internal sealed class Arguments
                 case "--auto":
                     result.Auto = true;
                     break;
+
+                case "--preview-ui":
+                {
+                    var value = inlineValue ?? TakeValue(argv, ref index);
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        result.Ignored.Add(raw);
+                    }
+                    else
+                    {
+                        result.PreviewPath = value.Trim().Trim('"');
+                    }
+
+                    break;
+                }
 
                 default:
                     result.Ignored.Add(raw);

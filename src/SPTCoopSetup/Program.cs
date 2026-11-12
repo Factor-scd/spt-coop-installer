@@ -20,6 +20,20 @@ internal static class Program
         var arguments = Arguments.Parse(argv);
         _auto = arguments.Auto;
 
+        // --preview-ui renders the window and exits: no target validation, no elevation, no engine run.
+        if (arguments.PreviewPath is { Length: > 0 } previewPath)
+        {
+            try
+            {
+                return PreviewRenderer.Run(previewPath, arguments);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Console.Error.WriteLine("preview failed: " + ex.Message);
+                return 1;
+            }
+        }
+
         // Validate the target BEFORE any elevation decision. A missing SPT install must produce
         // the friendly message, not a UAC prompt followed by the same message.
         if (arguments.Mode.HasValue &&

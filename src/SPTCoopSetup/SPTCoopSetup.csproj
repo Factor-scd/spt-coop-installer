@@ -24,6 +24,7 @@
     <EmbeddedResource Include="../../setup-spt.ps1" LogicalName="SPTCoopSetup.engine.setup-spt.ps1" />
     <EmbeddedResource Include="../../install-mods.ps1" LogicalName="SPTCoopSetup.engine.install-mods.ps1" />
     <EmbeddedResource Include="../../manifest/mods.json" LogicalName="SPTCoopSetup.engine.mods.json" />
+    <EmbeddedResource Include="assets/background-shader.png" LogicalName="SPTCoopSetup.assets.background-shader.png" />
   </ItemGroup>
 
 </Project>
