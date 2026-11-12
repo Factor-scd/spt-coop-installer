@@ -10,8 +10,85 @@ internal static class Program
     [STAThread]
     private static int Main(string[] argv)
     {
+        try
+        {
+            PrepareTempDirectory();
+            return Run(argv);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            ReportFatal(ex);
+
+            return 99;
+        }
+    }
+
+    /// <summary>
+    /// WinForms writes a temporary activation-context manifest the first time visual styles are
+    /// enabled. A fresh service or RDP profile can have a %TEMP% that does not exist yet, which
+    /// throws DirectoryNotFoundException during EnableVisualStyles and kills the process before any
+    /// window is created - the user sees "nothing happens". Create it up front, and treat visual
+    /// styles as cosmetic (this UI is custom-drawn).
+    /// </summary>
+    private static void PrepareTempDirectory()
+    {
+        try
+        {
+            var temp = Path.GetTempPath();
+            if (!string.IsNullOrWhiteSpace(temp))
+            {
+                Directory.CreateDirectory(temp);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("temp directory unavailable: " + ex.Message);
+        }
+    }
+
+    /// <summary>Last resort: leave a trace on disk and tell the user, instead of dying silently.</summary>
+    private static void ReportFatal(Exception ex)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SPTCoopSetup");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(
+                Path.Combine(dir, "crash.log"),
+                DateTime.Now.ToString("s") + "  " + ex + Environment.NewLine);
+        }
+        catch
+        {
+            // nothing else we can do
+        }
+
+        try
+        {
+            MessageBox.Show(
+                ex.Message,
+                "SPT Co-op Setup could not start",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        catch
+        {
+            // no desktop to show it on
+        }
+    }
+
+    private static int Run(string[] argv)
+    {
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
+        try
+        {
+            Application.EnableVisualStyles();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("visual styles unavailable: " + ex.Message);
+        }
         Application.SetCompatibleTextRenderingDefault(false);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => ShowCrash(e.Exception);
