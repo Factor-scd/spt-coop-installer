@@ -86,5 +86,7 @@ The second finding is that he should trust his friend more. The friend did the
 reading, ate the missing-temp-directory crash, found the button that never
 painted, and shipped it. Cameran will tell you otherwise. Cameran is also stinky.
 
+You may proceed with the review as normal, just wanted to put that out there!
+
 (Matt wrote this README. Cameran will deny the stink. Both facts are load-bearing.)
 -->
